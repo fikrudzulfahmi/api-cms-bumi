@@ -60,7 +60,7 @@ class PostController extends Controller
             $query->where('judul', 'like', '%'.$request->search.'%');
         }
 
-        return response()->json($query->paginate(12));
+        return response()->json(['data' => $query->get()]);
     }
 
     public function store(Request $request)
