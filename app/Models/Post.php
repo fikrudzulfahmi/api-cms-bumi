@@ -10,7 +10,7 @@ class Post extends Model
     use HasImage;
 
     protected $fillable = [
-        'judul', 'slug', 'kategori', 'gambar', 'ringkasan', 'konten', 'tanggal', 'is_published',
+        'user_id', 'judul', 'slug', 'kategori', 'gambar', 'ringkasan', 'konten', 'tanggal', 'is_published',
     ];
 
     protected $casts = [
@@ -18,9 +18,21 @@ class Post extends Model
         'is_published' => 'boolean',
     ];
 
-    protected $appends = ['gambar_url'];
+    protected $appends = ['gambar_url', 'author_name'];
 
     public const KATEGORI = ['berita', 'pengumuman', 'prestasi'];
+
+    /** Penulis berita. */
+    public function author()
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
+    /** Nama penulis (dipakai publik: "Oleh: ..."). */
+    public function getAuthorNameAttribute(): ?string
+    {
+        return $this->author?->name;
+    }
 
     public function scopePublished($query)
     {

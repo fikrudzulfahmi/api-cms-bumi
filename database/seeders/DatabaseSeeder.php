@@ -19,7 +19,7 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        $this->seedAdmin();
+        $this->call(UserSeeder::class);
         $this->seedSettings();
         $this->seedProfile();
         $this->seedTeachers();
@@ -31,16 +31,6 @@ class DatabaseSeeder extends Seeder
         $this->seedGalleries();
     }
 
-    protected function seedAdmin(): void
-    {
-        User::updateOrCreate(
-            ['email' => env('ADMIN_EMAIL', 'admin@bustanulmutaallimin.sch.id')],
-            [
-                'name' => 'Administrator',
-                'password' => Hash::make(env('ADMIN_PASSWORD', 'admin123')),
-            ]
-        );
-    }
 
     protected function seedSettings(): void
     {

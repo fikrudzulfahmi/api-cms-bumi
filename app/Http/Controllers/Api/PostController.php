@@ -15,7 +15,7 @@ class PostController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Post::published()->latest('tanggal')->latest('id');
+        $query = Post::with('author')->published()->latest('tanggal')->latest('id');
 
         if ($request->filled('kategori') && in_array($request->kategori, Post::KATEGORI, true)) {
             $query->kategori($request->kategori);
@@ -40,17 +40,22 @@ class PostController extends Controller
      */
     public function show(string $slug)
     {
-        $post = Post::published()->where('slug', $slug)->firstOrFail();
+        $post = Post::with('author')->published()->where('slug', $slug)->firstOrFail();
 
         return response()->json(['data' => $post]);
     }
 
     /**
-     * Admin — semua berita (termasuk draft).
+     * Admin/Penulis — daftar berita (termasuk draft).
+     * Penulis hanya melihat berita miliknya sendiri.
      */
     public function adminIndex(Request $request)
     {
-        $query = Post::latest('id');
+        $query = Post::with('author')->latest('id');
+
+        if (! $request->user()->isAdmin()) {
+            $query->where('user_id', $request->user()->id);
+        }
 
         if ($request->filled('kategori') && in_array($request->kategori, Post::KATEGORI, true)) {
             $query->kategori($request->kategori);
@@ -67,25 +72,48 @@ class PostController extends Controller
     {
         $data = $request->validate($this->rules());
         $data['slug'] = $this->resolveSlug($request);
+        $data['user_id'] = $request->user()->id; // penulis otomatis
 
-        return response()->json(['data' => Post::create($data)], 201);
+        return response()->json(['data' => Post::create($data)->load('author')], 201);
     }
 
     public function update(Request $request, Post $post)
     {
+        if ($deny = $this->denyIfNotOwner($request, $post)) {
+            return $deny;
+        }
+
         $data = $request->validate($this->rules());
         $data['slug'] = $this->resolveSlug($request, $post);
 
         $post->update($data);
 
-        return response()->json(['data' => $post->fresh()]);
+        return response()->json(['data' => $post->fresh()->load('author')]);
     }
 
-    public function destroy(Post $post)
+    public function destroy(Request $request, Post $post)
     {
+        if ($deny = $this->denyIfNotOwner($request, $post)) {
+            return $deny;
+        }
+
         $post->delete();
 
         return response()->json(['message' => 'Berita dihapus.']);
+    }
+
+    /** Penulis hanya boleh mengubah/menghapus berita miliknya. */
+    protected function denyIfNotOwner(Request $request, Post $post)
+    {
+        $user = $request->user();
+
+        if (! $user->isAdmin() && $post->user_id !== $user->id) {
+            return response()->json([
+                'message' => 'Anda hanya bisa mengelola berita milik Anda sendiri.',
+            ], 403);
+        }
+
+        return null;
     }
 
     protected function rules(): array

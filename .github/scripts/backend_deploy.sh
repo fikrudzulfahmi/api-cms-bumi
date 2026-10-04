@@ -39,6 +39,10 @@ fi
 
 echo "=== MIGRATE & CACHE ==="
 php artisan migrate --force
+
+echo "=== SEED AKUN (idempoten) ==="
+php artisan db:seed --class=UserSeeder --force || echo "PERINGATAN: seeder akun gagal (dilewati)"
+
 php artisan route:clear && php artisan route:cache
 php artisan config:clear && php artisan config:cache
 php artisan storage:link 2>/dev/null || true
