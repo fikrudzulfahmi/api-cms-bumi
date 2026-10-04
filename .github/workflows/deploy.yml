@@ -19,14 +19,20 @@ jobs:
         run: |
           set -uo pipefail
           PORT="${SSH_PORT:-22}"
-          echo "::warning title=DIAGNOSTIK::HOST=[${SSH_HOST:-KOSONG}] USER=[${SSH_USER:-KOSONG}] PORT=[${PORT}] PATH=[${DEPLOY_PATH:-KOSONG}] len(key)=${#SSH_KEY} baris=$(printf '%s' "$SSH_KEY" | wc -l) head=[$(printf '%s' "$SSH_KEY" | head -c 30 | tr -d '\n')]"
-
           mkdir -p ~/.ssh
           RAW=$(printf '%s' "$SSH_KEY" | tr -d '\r' | sed 's/\\n/\n/g')
-          try_key() { printf '%s\n' "$1" > /tmp/kt; ssh-keygen -y -f /tmp/kt >/dev/null 2>&1; }
+          echo "::warning title=KEY INFO::len=${#RAW} baris=$(printf '%s' "$RAW" | wc -l) md5=$(printf '%s' "$RAW" | md5sum | cut -d' ' -f1)"
+          echo "::warning title=KEY LINES::[$(printf '%s' "$RAW" | awk '{printf "%d ", length($0)}')]"
+          echo "::warning title=SECRET LAIN::HOST=[${SSH_HOST:-KOSONG}] USER=[${SSH_USER:-KOSONG}] PATH=[${DEPLOY_PATH:-KOSONG}]"
+
+          try_key() { printf '%s\n' "$1" > /tmp/kt; chmod 600 /tmp/kt; ssh-keygen -y -f /tmp/kt >/dev/null 2>&1; }
           OK=0; FMT=""
 
           if try_key "$RAW"; then cp /tmp/kt ~/.ssh/deploy_key; OK=1; FMT="as-is"; fi
+          if [ "$OK" = 0 ]; then
+            echo "::error title=TRY-1 as-is GAGAL::$(ssh-keygen -y -f /tmp/kt 2>&1 >/dev/null | tr '\n' ' ')"
+          fi
+
           if [ "$OK" = 0 ]; then
             if printf '%s' "$RAW" | tr -d '\n\r ' | base64 -d > /tmp/kd 2>/dev/null && try_key "$(cat /tmp/kd)"; then
               cp /tmp/kd ~/.ssh/deploy_key; OK=1; FMT="base64(file)"; fi
@@ -39,14 +45,13 @@ jobs:
           fi
 
           if [ "$OK" = 0 ]; then
-            echo "::error title=SSH_KEY RUSAK::SSH_KEY tidak bisa dibaca (terpotong/rusak). Perbaiki: di server jalankan 'cat ~/.ssh/deploy | base64 -w0' lalu paste UTUH (satu baris) sebagai secret SSH_KEY."
+            echo "::error title=SSH_KEY RUSAK::Tidak ada format yang valid. Cek md5 di atas vs file server."
             exit 1
           fi
           chmod 600 ~/.ssh/deploy_key
           echo "::notice title=SSH_KEY OK::format=$FMT | sidik jari pubkey=$(ssh-keygen -y -f ~/.ssh/deploy_key | md5sum | cut -c1-12)"
 
           ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-
           if OUT=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=20 "$SSH_USER@$SSH_HOST" "whoami && hostname" 2>&1); then
             echo "::notice title=SSH TERHUBUNG::$(printf '%s' "$OUT" | tr '\n' ' ')"
           else
