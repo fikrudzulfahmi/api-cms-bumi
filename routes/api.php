@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\ExtracurricularController;
 use App\Http\Controllers\Api\FacilityController;
 use App\Http\Controllers\Api\FeedbackController;
@@ -63,6 +64,12 @@ Route::prefix('admin')->group(function () {
             Route::post('/pengguna', [UserController::class, 'store']);
             Route::put('/pengguna/{user}', [UserController::class, 'update']);
             Route::delete('/pengguna/{user}', [UserController::class, 'destroy']);
+
+            // Jejak audit — BACA SAJA (tidak ada route hapus/ubah oleh desain)
+            Route::get('/log-aktivitas', [ActivityLogController::class, 'index']);
+            Route::get('/log-aktivitas/ringkasan', [ActivityLogController::class, 'ringkasan']);
+            Route::get('/log-aktivitas/verifikasi', [ActivityLogController::class, 'verifikasi']);
+            Route::get('/log-aktivitas/ekspor', [ActivityLogController::class, 'ekspor']);
 
             // Guru & karyawan
             Route::get('/guru-karyawan', [TeacherController::class, 'index']);

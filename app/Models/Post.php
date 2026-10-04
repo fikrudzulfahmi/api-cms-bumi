@@ -3,11 +3,13 @@
 namespace App\Models;
 
 use App\Models\Traits\HasImage;
+use App\Models\Traits\LogsActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class Post extends Model
 {
     use HasImage;
+    use LogsActivity;
 
     protected $fillable = [
         'user_id', 'judul', 'slug', 'kategori', 'gambar', 'ringkasan', 'konten', 'tanggal', 'is_published',
@@ -42,5 +44,11 @@ class Post extends Model
     public function scopeKategori($query, string $kategori)
     {
         return $query->where('kategori', $kategori);
+    }
+
+    /** Nama entitas pada log aktivitas. */
+    public function activityLabel(): string
+    {
+        return 'Berita';
     }
 }

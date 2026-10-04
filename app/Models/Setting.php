@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Models\Traits\LogsActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class Setting extends Model
 {
+    use LogsActivity;
+
     protected $fillable = ['key', 'value', 'group'];
 
     /**
@@ -16,5 +19,17 @@ class Setting extends Model
         $row = static::where('key', $key)->first();
 
         return $row ? $row->value : $default;
+    }
+
+    /** Nama entitas pada log aktivitas. */
+    public function activityLabel(): string
+    {
+        return 'Pengaturan';
+    }
+
+    /** Setiap perubahan pengaturan situs layak dicatat sebagai perhatian. */
+    protected function activitySeverity(string $event): string
+    {
+        return $event === 'buat' ? 'info' : 'warning';
     }
 }

@@ -7,12 +7,14 @@ use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use App\Models\Traits\LogsActivity;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
+    use LogsActivity;
 
     /**
      * The attributes that are mass assignable.
@@ -53,5 +55,17 @@ class User extends Authenticatable
     public function isAdmin(): bool
     {
         return $this->role === 'admin';
+    }
+
+    /** Nama entitas pada log aktivitas. */
+    public function activityLabel(): string
+    {
+        return 'Akun Pengguna';
+    }
+
+    /** Perubahan akun selalu penting untuk jejak audit. */
+    protected function activitySeverity(string $event): string
+    {
+        return 'critical';
     }
 }
