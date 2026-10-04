@@ -19,34 +19,27 @@ jobs:
         run: |
           set -uo pipefail
           PORT="${SSH_PORT:-22}"
-          PATHINFO="HOST=[${SSH_HOST:-KOSONG}] USER=[${SSH_USER:-KOSONG}] PORT=[${PORT}] PATH=[${DEPLOY_PATH:-KOSONG}] len(key)=${#SSH_KEY}"
-          echo "::warning title=DIAGNOSTIK::$PATHINFO"
+          echo "::warning title=DIAGNOSTIK::HOST=[${SSH_HOST:-KOSONG}] USER=[${SSH_USER:-KOSONG}] PORT=[${PORT}] PATH=[${DEPLOY_PATH:-KOSONG}] len(key)=${#SSH_KEY} baris=$(printf '%s' "$SSH_KEY" | wc -l) head=[$(printf '%s' "$SSH_KEY" | head -c 30 | tr -d '\n')]"
 
           mkdir -p ~/.ssh
-          RAW=$(printf '%s' "$SSH_KEY" | tr -d '\r')
+          RAW=$(printf '%s' "$SSH_KEY" | tr -d '\r' | sed 's/\\n/\n/g')
+          try_key() { printf '%s\n' "$1" > /tmp/kt; ssh-keygen -y -f /tmp/kt >/dev/null 2>&1; }
           OK=0; FMT=""
 
-          if printf '%s' "$RAW" | head -c 30 | grep -q -- '-----BEGIN'; then
-            printf '%s\n' "$RAW" > /tmp/k1
-            if ssh-keygen -y -f /tmp/k1 >/dev/null 2>&1; then cp /tmp/k1 ~/.ssh/deploy_key; OK=1; FMT="PEM utuh"; fi
+          if try_key "$RAW"; then cp /tmp/kt ~/.ssh/deploy_key; OK=1; FMT="as-is"; fi
+          if [ "$OK" = 0 ]; then
+            if printf '%s' "$RAW" | tr -d '\n\r ' | base64 -d > /tmp/kd 2>/dev/null && try_key "$(cat /tmp/kd)"; then
+              cp /tmp/kd ~/.ssh/deploy_key; OK=1; FMT="base64(file)"; fi
+          fi
+          if [ "$OK" = 0 ]; then
+            CLEAN=$(printf '%s' "$RAW" | sed -e 's/-----BEGIN OPENSSH PRIVATE KEY-----//g' -e 's/-----END OPENSSH PRIVATE KEY-----//g' | tr -d ' \t\n\r')
+            { echo "-----BEGIN OPENSSH PRIVATE KEY-----"; printf '%s\n' "$CLEAN" | fold -w 70; echo "-----END OPENSSH PRIVATE KEY-----"; } > /tmp/kr
+            printf '\n' >> /tmp/kr
+            if try_key "$(cat /tmp/kr)"; then cp /tmp/kr ~/.ssh/deploy_key; OK=1; FMT="rebuild"; fi
           fi
 
           if [ "$OK" = 0 ]; then
-            if printf '%s' "$RAW" | base64 -d > /tmp/k2 2>/dev/null && ssh-keygen -y -f /tmp/k2 >/dev/null 2>&1; then
-              cp /tmp/k2 ~/.ssh/deploy_key; OK=1; FMT="base64(file) -> decode"
-            fi
-          fi
-
-          if [ "$OK" = 0 ]; then
-            { echo "-----BEGIN OPENSSH PRIVATE KEY-----"
-              printf '%s' "$RAW" | tr -d '\n' | fold -w 70
-              echo "-----END OPENSSH PRIVATE KEY-----"; } > /tmp/k3
-            printf '\n' >> /tmp/k3
-            if ssh-keygen -y -f /tmp/k3 >/dev/null 2>&1; then cp /tmp/k3 ~/.ssh/deploy_key; OK=1; FMT="body base64 -> dibungkus"; fi
-          fi
-
-          if [ "$OK" = 0 ]; then
-            echo "::error title=SSH_KEY RUSAK::Secret SSH_KEY tidak valid/terpotong. Perbaiki: di server jalankan 'cat ~/.ssh/deploy | base64 -w0' lalu paste UTUH (satu baris) sebagai secret SSH_KEY."
+            echo "::error title=SSH_KEY RUSAK::SSH_KEY tidak bisa dibaca (terpotong/rusak). Perbaiki: di server jalankan 'cat ~/.ssh/deploy | base64 -w0' lalu paste UTUH (satu baris) sebagai secret SSH_KEY."
             exit 1
           fi
           chmod 600 ~/.ssh/deploy_key
