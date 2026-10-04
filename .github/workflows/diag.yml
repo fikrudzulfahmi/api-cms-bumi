@@ -9,7 +9,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Diagnostik backend root
+      - name: Diagnostik render root
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -31,19 +31,41 @@ jobs:
             "$SSH_USER@$SSH_HOST" "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE' 2>&1
           export PATH="$HOME/bin:/usr/local/bin:/usr/bin:/bin:/opt/cpanel/composer/bin:$PATH"
           cd "$DEPLOY_PATH" || exit 1
-          echo "== ADA FILE? =="
-          for f in config/cms.php resources/views/backend-home.blade.php resources/views/errors/404.blade.php resources/views/components/error-page.blade.php; do
-            [ -e "$f" ] && echo "  ADA   $f" || echo "  HILANG $f"
-          done
-          echo "== ROUTE =="
-          php artisan route:list 2>&1 | grep -E "GET|POST" | head -5
-          echo "== KELAS ADA? =="
-          php -r "require 'vendor/autoload.php'; echo class_exists('App\\Http\\Controllers\\LandingController') ? '  class OK' : '  class TIDAK ADA';" 2>&1
-          echo ""
-          echo "== PESAN ERROR (log) =="
-          grep -a "ERROR" storage/logs/laravel.log 2>/dev/null | tail -2 | cut -c1-320
-          echo "== 3 BARIS PERTAMA EXCEPTION TERAKHIR =="
-          grep -a -A3 "production.ERROR" storage/logs/laravel.log 2>/dev/null | tail -6 | cut -c1-320
+
+          cat > probe_diag.php <<'PHP'
+          <?php
+          require __DIR__.'/vendor/autoload.php';
+          $app = require __DIR__.'/bootstrap/app.php';
+          $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+          echo "== APP ==\n";
+          echo "env=".config('app.env')." debug=".(config('app.debug') ? 'true' : 'false')." key=".(config('app.key') ? 'ADA' : 'KOSONG')."\n";
+          echo "cms.nama=".var_export(config('cms.nama'), true)."\n";
+          echo "cms.frontend_url=".var_export(config('cms.frontend_url'), true)."\n";
+
+          echo "== RENDER VIEW backend-home ==\n";
+          try {
+              $out = view('backend-home', ['nama' => 'UJI', 'versi' => 'x', 'lingkungan' => 'local'])->render();
+              echo "OK panjang=".strlen($out)."\n";
+          } catch (\Throwable $e) {
+              echo "GAGAL: ".get_class($e).": ".$e->getMessage()."\n";
+              echo "  di ".$e->getFile().":".$e->getLine()."\n";
+          }
+
+          echo "== HANDLE REQUEST / ==\n";
+          try {
+              $kernel = $app->make(Illuminate\Contracts\Http\Kernel::class);
+              $req = Illuminate\Http\Request::create('/', 'GET');
+              $res = $kernel->handle($req);
+              echo "status=".$res->getStatusCode()." panjang=".strlen($res->getContent())."\n";
+          } catch (\Throwable $e) {
+              echo "GAGAL: ".get_class($e).": ".$e->getMessage()."\n";
+              echo "  di ".$e->getFile().":".$e->getLine()."\n";
+          }
+          PHP
+
+          php probe_diag.php 2>&1 | head -40
+          rm -f probe_diag.php
           REMOTE
           )
           SAFE=$(printf '%s' "$OUT" | sed -e "s|$SSH_USER|USER|g" -e "s|$SSH_HOST|HOST|g" -e 's|/home/[^/ ]*|/home/USER|g')
