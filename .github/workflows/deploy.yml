@@ -9,6 +9,30 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Diagnostik secret
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          KEY_HEAD=$(printf '%s' "$SSH_KEY" | head -c 35 | tr -d '\n')
+          KEY_LINES=$(printf '%s' "$SSH_KEY" | wc -l)
+          {
+            echo "### Diagnostik Secret (Backend)"
+            echo ""
+            echo "| Item | Nilai |"
+            echo "|---|---|"
+            echo "| SSH_HOST | ${SSH_HOST:-**KOSONG**} |"
+            echo "| SSH_USER | ${SSH_USER:-**KOSONG**} |"
+            echo "| SSH_PORT | ${SSH_PORT:-22} |"
+            echo "| DEPLOY_PATH | ${DEPLOY_PATH:-**KOSONG**} |"
+            echo "| SSH_KEY panjang | ${#SSH_KEY} |"
+            echo "| SSH_KEY baris | ${KEY_LINES} |"
+            echo "| SSH_KEY awal | ${KEY_HEAD:-**KOSONG**} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Deploy via SSH
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -19,16 +43,6 @@ jobs:
         run: |
           set -euo pipefail
           PORT="${SSH_PORT:-22}"
-
-          echo "================= DIAGNOSTIK SECRET ================="
-          echo "SSH_HOST   = [$SSH_HOST]"
-          echo "SSH_USER   = [$SSH_USER]"
-          echo "SSH_PORT   = [$PORT]"
-          echo "DEPLOY_PATH= [$DEPLOY_PATH]"
-          echo "SSH_KEY    : panjang=${#SSH_KEY} huruf, baris=$(printf '%s' "$SSH_KEY" | wc -l)"
-          echo "SSH_KEY    : awal -> $(printf '%s' "$SSH_KEY" | head -c 40)"
-          echo "====================================================="
-
           mkdir -p ~/.ssh
           printf '%s' "$SSH_KEY" | sed 's/\\n/\n/g' > ~/.ssh/deploy_key
           printf '\n' >> ~/.ssh/deploy_key
