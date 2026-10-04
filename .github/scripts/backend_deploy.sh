@@ -37,6 +37,37 @@ else
   echo "(jika vendor/ sudah ada, aplikasi tetap jalan)"
 fi
 
+# ---------------------------------------------------------------------------
+# Jaga .env tetap sehat untuk produksi.
+# - APP_KEY kosong => route yang memakai session/encryption akan 500.
+# - APP_DEBUG=true => halaman error membocorkan isi .env (bahaya, server publik).
+# ---------------------------------------------------------------------------
+echo "=== ENV PRODUKSI (aman) ==="
+if [ -f .env ]; then
+  if grep -qE '^APP_KEY=base64:.+' .env; then
+    echo "APP_KEY  : sudah ada"
+  else
+    echo "APP_KEY  : KOSONG -> membuat baru"
+    php artisan key:generate --force
+  fi
+
+  if grep -qE '^APP_DEBUG=true' .env; then
+    sed -i 's/^APP_DEBUG=true/APP_DEBUG=false/' .env
+    echo "APP_DEBUG: true -> false (produksi)"
+  else
+    echo "APP_DEBUG: aman"
+  fi
+
+  if grep -qE '^APP_ENV=local' .env; then
+    sed -i 's/^APP_ENV=local/APP_ENV=production/' .env
+    echo "APP_ENV  : local -> production"
+  else
+    echo "APP_ENV  : $(grep -E '^APP_ENV=' .env | cut -d= -f2- || echo '-')"
+  fi
+else
+  echo "PERINGATAN: file .env TIDAK ADA — buat manual di server."
+fi
+
 echo "=== MIGRATE & CACHE ==="
 php artisan migrate --force
 
@@ -45,6 +76,7 @@ php artisan db:seed --class=UserSeeder --force || echo "PERINGATAN: seeder akun 
 
 php artisan route:clear && php artisan route:cache
 php artisan config:clear && php artisan config:cache
+php artisan view:clear
 php artisan storage:link 2>/dev/null || true
 
 echo "=== DEPLOY SELESAI ==="
