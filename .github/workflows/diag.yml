@@ -9,7 +9,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Diagnostik domain & SSL
+      - name: AutoSSL
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -25,9 +25,13 @@ jobs:
           ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
           SSH="ssh -i ~/.ssh/k -p $PORT -o StrictHostKeyChecking=no -o BatchMode=yes $SSH_USER@$SSH_HOST"
 
-          OUT=$($SSH "uapi DomainInfo list_domains --output=json 2>&1 | tr '\n' ' '" || true)
-          echo "::warning title=DOMAININFO::$OUT"
-          OUT=$($SSH "uapi SSL installed_hosts --output=json 2>&1 | tr '\n' ' '" || true)
-          echo "::warning title=SSL_HOSTS::$OUT"
-          OUT=$($SSH "ls -la ~/ssl/keys 2>&1 | head -20; echo '---'; cat ~/.cpanel/datastore/* 2>/dev/null | head -c 500" || true)
-          echo "::warning title=SSL_FILES::$OUT"
+          OUT=$($SSH "ls /usr/local/cpanel/bin 2>/dev/null | grep -i -E 'autossl|ssl' ; echo '===' ; uapi SSL start_autossl_check 2>&1 | head -c 600" || true)
+          echo "::warning title=TOOLS+TRIGGER::$OUT"
+
+          echo "menunggu AutoSSL 75s..."
+          sleep 75
+
+          for h in bumi.backupmate.biz.id api-bumi.backupmate.biz.id; do
+            SUBJ=$(echo | timeout 12 openssl s_client -connect $h:443 -servername $h 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | tr -d '\n' || true)
+            echo "::warning title=CERT $h::$SUBJ"
+          done
