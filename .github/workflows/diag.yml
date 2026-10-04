@@ -31,19 +31,20 @@ jobs:
             "$SSH_USER@$SSH_HOST" "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE' 2>&1
           export PATH="$HOME/bin:/usr/local/bin:/usr/bin:/bin:/opt/cpanel/composer/bin:$PATH"
           cd "$DEPLOY_PATH" || exit 1
-          echo "PWD=$(pwd)"
-          echo "--- FILE ---"
-          ls -la config/cms.php resources/views/backend-home.blade.php 2>&1
-          ls -la resources/views/errors/ 2>&1 | head -9
-          echo "--- ROUTES ---"
-          php artisan route:list 2>&1 | head -6
-          echo "--- CACHE ---"
-          ls -la bootstrap/cache/ 2>&1
-          echo "--- HTTP ROOT (lokal) ---"
-          curl -s -o /dev/null -w "root=%{http_code}" -H "Host: api-bumi.backupmate.biz.id" http://127.0.0.1/ 2>&1
+          echo "== ADA FILE? =="
+          for f in config/cms.php resources/views/backend-home.blade.php resources/views/errors/404.blade.php resources/views/components/error-page.blade.php; do
+            [ -e "$f" ] && echo "  ADA   $f" || echo "  HILANG $f"
+          done
+          echo "== ROUTE =="
+          php artisan route:list 2>&1 | grep -E "GET|POST" | head -5
+          echo "== KELAS ADA? =="
+          php -r "require 'vendor/autoload.php'; echo class_exists('App\\Http\\Controllers\\LandingController') ? '  class OK' : '  class TIDAK ADA';" 2>&1
           echo ""
-          echo "--- LOG EKOR ---"
-          tail -35 storage/logs/laravel.log 2>&1
+          echo "== PESAN ERROR (log) =="
+          grep -a "ERROR" storage/logs/laravel.log 2>/dev/null | tail -2 | cut -c1-320
+          echo "== 3 BARIS PERTAMA EXCEPTION TERAKHIR =="
+          grep -a -A3 "production.ERROR" storage/logs/laravel.log 2>/dev/null | tail -6 | cut -c1-320
           REMOTE
           )
-          echo "::warning title=DIAGB64::$(printf '%s' "$OUT" | base64 -w0)"
+          SAFE=$(printf '%s' "$OUT" | sed -e "s|$SSH_USER|USER|g" -e "s|$SSH_HOST|HOST|g" -e 's|/home/[^/ ]*|/home/USER|g')
+          echo "::warning title=DIAGB64::$(printf '%s' "$SAFE" | base64 -w0)"
