@@ -1,0 +1,49 @@
+name: Diagnostik cPanel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnostik backend root
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -uo pipefail
+          PORT="${SSH_PORT:-22}"
+          mkdir -p ~/.ssh
+          RAW=$(printf '%s' "$SSH_KEY" | tr -d '\r' | sed 's/\\n/\n/g')
+          printf '%s\n' "$RAW" > /tmp/kt; chmod 600 /tmp/kt
+          if ssh-keygen -y -f /tmp/kt >/dev/null 2>&1; then cp /tmp/kt ~/.ssh/deploy_key; else
+            echo "::error title=KEY::gagal"; exit 1; fi
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          OUT=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no -o BatchMode=yes \
+            "$SSH_USER@$SSH_HOST" "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE' 2>&1
+          export PATH="$HOME/bin:/usr/local/bin:/usr/bin:/bin:/opt/cpanel/composer/bin:$PATH"
+          cd "$DEPLOY_PATH" || exit 1
+          echo "PWD=$(pwd)"
+          echo "--- FILE ---"
+          ls -la config/cms.php resources/views/backend-home.blade.php 2>&1
+          ls -la resources/views/errors/ 2>&1 | head -9
+          echo "--- ROUTES ---"
+          php artisan route:list 2>&1 | head -6
+          echo "--- CACHE ---"
+          ls -la bootstrap/cache/ 2>&1
+          echo "--- HTTP ROOT (lokal) ---"
+          curl -s -o /dev/null -w "root=%{http_code}" -H "Host: api-bumi.backupmate.biz.id" http://127.0.0.1/ 2>&1
+          echo ""
+          echo "--- LOG EKOR ---"
+          tail -35 storage/logs/laravel.log 2>&1
+          REMOTE
+          )
+          echo "::warning title=DIAG::$OUT"
