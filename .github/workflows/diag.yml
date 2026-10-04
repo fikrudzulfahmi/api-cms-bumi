@@ -9,7 +9,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: AutoSSL
+      - name: Alasan AutoSSL
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -25,13 +25,17 @@ jobs:
           ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
           SSH="ssh -i ~/.ssh/k -p $PORT -o StrictHostKeyChecking=no -o BatchMode=yes $SSH_USER@$SSH_HOST"
 
-          OUT=$($SSH "ls /usr/local/cpanel/bin 2>/dev/null | grep -i -E 'autossl|ssl' ; echo '===' ; uapi SSL start_autossl_check 2>&1 | head -c 600" || true)
-          echo "::warning title=TOOLS+TRIGGER::$OUT"
+          OUT=$($SSH "/usr/local/cpanel/bin/autossl_check --user=\$USER 2>&1 | tail -30" || true)
+          echo "::warning title=1-AUTOSSL_CHECK::$OUT"
 
-          echo "menunggu AutoSSL 75s..."
-          sleep 75
+          OUT=$($SSH "uapi SSL start_autossl_check --output=json 2>&1 | head -c 500" || true)
+          echo "::warning title=2-START_AUTOSSL::$OUT"
 
-          for h in bumi.backupmate.biz.id api-bumi.backupmate.biz.id; do
-            SUBJ=$(echo | timeout 12 openssl s_client -connect $h:443 -servername $h 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | tr -d '\n' || true)
-            echo "::warning title=CERT $h::$SUBJ"
-          done
+          OUT=$($SSH "ls -t ~/.cpanel/logs 2>/dev/null | head -5; echo '---'; tail -25 ~/.cpanel/logs/autossl*.log 2>/dev/null" || true)
+          echo "::warning title=3-LOG_USER::$OUT"
+
+          OUT=$($SSH "ls -t /usr/local/cpanel/logs 2>/dev/null | grep -i -E 'autossl|ssl' | head -5" || true)
+          echo "::warning title=4-LOG_ROOT::$OUT"
+
+          OUT=$($SSH "uapi DomainInfo single_domain_data domain=bumi.backupmate.biz.id --output=json 2>&1 | tr '\n' ' ' | head -c 900" || true)
+          echo "::warning title=5-DOMAIN_DATA::$OUT"
