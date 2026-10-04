@@ -9,7 +9,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy via SSH
+      - name: SSH key + Deploy
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -19,43 +19,51 @@ jobs:
         run: |
           set -uo pipefail
           PORT="${SSH_PORT:-22}"
+          PATHINFO="HOST=[${SSH_HOST:-KOSONG}] USER=[${SSH_USER:-KOSONG}] PORT=[${PORT}] PATH=[${DEPLOY_PATH:-KOSONG}] len(key)=${#SSH_KEY}"
+          echo "::warning title=DIAGNOSTIK::$PATHINFO"
+
           mkdir -p ~/.ssh
+          RAW=$(printf '%s' "$SSH_KEY" | tr -d '\r')
+          OK=0; FMT=""
 
-          KEY=$(printf '%s' "$SSH_KEY" | sed 's/\\n/\n/g')
-          HEAD20=$(printf '%s' "$KEY" | head -c 20)
-          case "$HEAD20" in
-            -----BEGIN*) printf '%s\n' "$KEY" > ~/.ssh/deploy_key;;
-            ssh-*|ecdsa-*|ssh-rsa*) echo "::error title=SSH_KEY::Ini PUBLIC key, bukan private"; exit 1;;
-            *) { echo "-----BEGIN OPENSSH PRIVATE KEY-----"
-                 printf '%s' "$KEY" | tr -d '\n' | fold -w 70
-                 echo "-----END OPENSSH PRIVATE KEY-----"; } > ~/.ssh/deploy_key;;
-          esac
-          printf '\n' >> ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          if printf '%s' "$RAW" | head -c 30 | grep -q -- '-----BEGIN'; then
+            printf '%s\n' "$RAW" > /tmp/k1
+            if ssh-keygen -y -f /tmp/k1 >/dev/null 2>&1; then cp /tmp/k1 ~/.ssh/deploy_key; OK=1; FMT="PEM utuh"; fi
+          fi
 
-          echo "=== validasi key lokal ==="
-          KERR=$(mktemp)
-          if PUB=$(ssh-keygen -y -f ~/.ssh/deploy_key 2>"$KERR"); then
-            echo "::notice title=KEY VALID::ssh-keygen berhasil | pubkey: $(printf '%s' "$PUB" | head -c 45)..."
-          else
-            echo "::error title=KEY INVALID::ssh-keygen gagal baca key: $(tr '\n' ' ' < "$KERR")"
+          if [ "$OK" = 0 ]; then
+            if printf '%s' "$RAW" | base64 -d > /tmp/k2 2>/dev/null && ssh-keygen -y -f /tmp/k2 >/dev/null 2>&1; then
+              cp /tmp/k2 ~/.ssh/deploy_key; OK=1; FMT="base64(file) -> decode"
+            fi
+          fi
+
+          if [ "$OK" = 0 ]; then
+            { echo "-----BEGIN OPENSSH PRIVATE KEY-----"
+              printf '%s' "$RAW" | tr -d '\n' | fold -w 70
+              echo "-----END OPENSSH PRIVATE KEY-----"; } > /tmp/k3
+            printf '\n' >> /tmp/k3
+            if ssh-keygen -y -f /tmp/k3 >/dev/null 2>&1; then cp /tmp/k3 ~/.ssh/deploy_key; OK=1; FMT="body base64 -> dibungkus"; fi
+          fi
+
+          if [ "$OK" = 0 ]; then
+            echo "::error title=SSH_KEY RUSAK::Secret SSH_KEY tidak valid/terpotong. Perbaiki: di server jalankan 'cat ~/.ssh/deploy | base64 -w0' lalu paste UTUH (satu baris) sebagai secret SSH_KEY."
             exit 1
           fi
+          chmod 600 ~/.ssh/deploy_key
+          echo "::notice title=SSH_KEY OK::format=$FMT | sidik jari pubkey=$(ssh-keygen -y -f ~/.ssh/deploy_key | md5sum | cut -c1-12)"
 
           ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-          echo "=== tes koneksi SSH ==="
           if OUT=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=20 "$SSH_USER@$SSH_HOST" "whoami && hostname" 2>&1); then
-            echo "::notice title=SSH OK::$(printf '%s' "$OUT" | tr '\n' ' ')"
+            echo "::notice title=SSH TERHUBUNG::$(printf '%s' "$OUT" | tr '\n' ' ')"
           else
             echo "::error title=SSH GAGAL::$(printf '%s' "$OUT" | tr '\n' '|')"
             exit 1
           fi
 
-          echo "=== deploy aplikasi ==="
           REMOTE_CMD="set -e; cd '$DEPLOY_PATH'; echo lokasi: \$(pwd); git pull origin main; composer install --no-dev --optimize-autoloader --no-interaction; php artisan migrate --force; php artisan route:clear && php artisan route:cache; php artisan config:clear && php artisan config:cache; php artisan storage:link 2>/dev/null || true; echo 'deploy selesai'"
           if OUT2=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no -o BatchMode=yes "$SSH_USER@$SSH_HOST" "$REMOTE_CMD" 2>&1); then
-            echo "::notice title=DEPLOY OK::$(printf '%s' "$OUT2" | tr '\n' '|' | tail -c 400)"
+            echo "::notice title=DEPLOY BACKEND OK::$(printf '%s' "$OUT2" | tr '\n' '|' | tail -c 400)"
           else
             echo "::error title=DEPLOY GAGAL::$(printf '%s' "$OUT2" | tr '\n' '|' | tail -c 400)"
             exit 1
