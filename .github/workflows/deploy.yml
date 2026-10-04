@@ -17,21 +17,21 @@ jobs:
           SSH_KEY: ${{ secrets.SSH_KEY }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
+          PORT="${SSH_PORT:-22}"
           KEY_HEAD=$(printf '%s' "$SSH_KEY" | head -c 35 | tr -d '\n')
           KEY_LINES=$(printf '%s' "$SSH_KEY" | wc -l)
-          {
-            echo "### Diagnostik Secret (Backend)"
-            echo ""
-            echo "| Item | Nilai |"
-            echo "|---|---|"
-            echo "| SSH_HOST | ${SSH_HOST:-**KOSONG**} |"
-            echo "| SSH_USER | ${SSH_USER:-**KOSONG**} |"
-            echo "| SSH_PORT | ${SSH_PORT:-22} |"
-            echo "| DEPLOY_PATH | ${DEPLOY_PATH:-**KOSONG**} |"
-            echo "| SSH_KEY panjang | ${#SSH_KEY} |"
-            echo "| SSH_KEY baris | ${KEY_LINES} |"
-            echo "| SSH_KEY awal | ${KEY_HEAD:-**KOSONG**} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          MSG="HOST=[${SSH_HOST:-KOSONG}] USER=[${SSH_USER:-KOSONG}] PORT=[${PORT}] PATH=[${DEPLOY_PATH:-KOSONG}] | SSH_KEY: len=${#SSH_KEY} baris=${KEY_LINES} awal=[${KEY_HEAD:-KOSONG}]"
+          echo "::warning title=DIAGNOSTIK SECRET::$MSG"
+          echo "$MSG" >> "$GITHUB_STEP_SUMMARY"
+          case "$KEY_HEAD" in
+            -----BEGIN*) echo "::warning title=SSH_KEY::Format OK (private key OpenSSH).";;
+            "")          echo "::error title=SSH_KEY::SSH_KEY KOSONG / belum diisi di repo ini.";;
+            ssh-*|ecdsa-*|ssh-rsa*) echo "::error title=SSH_KEY::Nilai diawali [$KEY_HEAD] -> itu PUBLIC key, harus PRIVATE key!";;
+            *)           echo "::error title=SSH_KEY::Format aneh, diawali [$KEY_HEAD].";;
+          esac
+          if [ -z "${SSH_HOST}" ] || [ -z "${SSH_USER}" ]; then
+            echo "::error title=SECRETS::SSH_HOST dan/atau SSH_USER KOSONG."
+          fi
 
       - name: Deploy via SSH
         env:
