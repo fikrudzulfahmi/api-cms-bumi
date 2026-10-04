@@ -1,0 +1,33 @@
+name: Diagnostik cPanel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnostik domain & SSL
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          set -uo pipefail
+          PORT="${SSH_PORT:-22}"
+          mkdir -p ~/.ssh
+          printf '%s' "$SSH_KEY" | tr -d '\r' > ~/.ssh/k
+          printf '\n' >> ~/.ssh/k
+          chmod 600 ~/.ssh/k
+          ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          SSH="ssh -i ~/.ssh/k -p $PORT -o StrictHostKeyChecking=no -o BatchMode=yes $SSH_USER@$SSH_HOST"
+
+          OUT=$($SSH "uapi DomainInfo list_domains --output=json 2>&1 | tr '\n' ' '" || true)
+          echo "::warning title=DOMAININFO::$OUT"
+          OUT=$($SSH "uapi SSL installed_hosts --output=json 2>&1 | tr '\n' ' '" || true)
+          echo "::warning title=SSL_HOSTS::$OUT"
+          OUT=$($SSH "ls -la ~/ssl/keys 2>&1 | head -20; echo '---'; cat ~/.cpanel/datastore/* 2>/dev/null | head -c 500" || true)
+          echo "::warning title=SSL_FILES::$OUT"
