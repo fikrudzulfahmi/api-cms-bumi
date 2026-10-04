@@ -46,4 +46,4 @@ jobs:
           tail -35 storage/logs/laravel.log 2>&1
           REMOTE
           )
-          echo "::warning title=DIAG::$OUT"
+          echo "::warning title=DIAGB64::$(printf '%s' "$OUT" | base64 -w0)"
