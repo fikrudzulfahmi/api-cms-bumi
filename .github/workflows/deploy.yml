@@ -9,20 +9,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Diagnostik secret
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_KEY: ${{ secrets.SSH_KEY }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-        run: |
-          PORT="${SSH_PORT:-22}"
-          KEY_HEAD=$(printf '%s' "$SSH_KEY" | head -c 35 | tr -d '\n')
-          MSG="HOST=[${SSH_HOST:-KOSONG}] USER=[${SSH_USER:-KOSONG}] PORT=[${PORT}] PATH=[${DEPLOY_PATH:-KOSONG}] | SSH_KEY len=${#SSH_KEY} baris=$(printf '%s' "$SSH_KEY" | wc -l) awal=[${KEY_HEAD:-KOSONG}]"
-          echo "::warning title=DIAGNOSTIK SECRET::$MSG"
-          echo "$MSG" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Deploy via SSH
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -31,42 +17,46 @@ jobs:
           SSH_KEY: ${{ secrets.SSH_KEY }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           PORT="${SSH_PORT:-22}"
           mkdir -p ~/.ssh
 
-          # Normalisasi key: unescape \n, lalu bungkus bila hanya body base64
           KEY=$(printf '%s' "$SSH_KEY" | sed 's/\\n/\n/g')
           HEAD20=$(printf '%s' "$KEY" | head -c 20)
           case "$HEAD20" in
-            -----BEGIN*) printf '%s\n' "$KEY" > ~/.ssh/deploy_key
-                         echo "::notice title=SSH_KEY::format PEM utuh (dipakai apa adanya)";;
-            ssh-*|ecdsa-*|ssh-rsa*) echo "::error title=SSH_KEY::Ini PUBLIC key"; exit 1;;
+            -----BEGIN*) printf '%s\n' "$KEY" > ~/.ssh/deploy_key;;
+            ssh-*|ecdsa-*|ssh-rsa*) echo "::error title=SSH_KEY::Ini PUBLIC key, bukan private"; exit 1;;
             *) { echo "-----BEGIN OPENSSH PRIVATE KEY-----"
                  printf '%s' "$KEY" | tr -d '\n' | fold -w 70
-                 echo "-----END OPENSSH PRIVATE KEY-----"; } > ~/.ssh/deploy_key
-               echo "::notice title=SSH_KEY::hanya body base64 -> otomatis dibungkus jadi private key";;
+                 echo "-----END OPENSSH PRIVATE KEY-----"; } > ~/.ssh/deploy_key;;
           esac
           printf '\n' >> ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+
+          echo "=== validasi key lokal ==="
+          KERR=$(mktemp)
+          if PUB=$(ssh-keygen -y -f ~/.ssh/deploy_key 2>"$KERR"); then
+            echo "::notice title=KEY VALID::ssh-keygen berhasil | pubkey: $(printf '%s' "$PUB" | head -c 45)..."
+          else
+            echo "::error title=KEY INVALID::ssh-keygen gagal baca key: $(tr '\n' ' ' < "$KERR")"
+            exit 1
+          fi
+
           ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-          echo "================= TES KONEKSI SSH ================="
-          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no -o ConnectTimeout=20 \
-            "$SSH_USER@$SSH_HOST" "echo TERHUBUNG sebagai \$(whoami) di \$(hostname)"
-          echo "==================================================="
+          echo "=== tes koneksi SSH ==="
+          if OUT=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=20 "$SSH_USER@$SSH_HOST" "whoami && hostname" 2>&1); then
+            echo "::notice title=SSH OK::$(printf '%s' "$OUT" | tr '\n' ' ')"
+          else
+            echo "::error title=SSH GAGAL::$(printf '%s' "$OUT" | tr '\n' '|')"
+            exit 1
+          fi
 
-          echo "================= DEPLOY APLIKASI ================="
-          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" bash -s <<REMOTE
-          set -e
-          cd '$DEPLOY_PATH'
-          echo "--- lokasi: \$(pwd) ---"
-          git pull origin main
-          composer install --no-dev --optimize-autoloader --no-interaction
-          php artisan migrate --force
-          php artisan route:clear && php artisan route:cache
-          php artisan config:clear && php artisan config:cache
-          php artisan storage:link 2>/dev/null || true
-          echo "--- deploy selesai ---"
-          REMOTE
-          echo "===================== SELESAI ====================="
+          echo "=== deploy aplikasi ==="
+          REMOTE_CMD="set -e; cd '$DEPLOY_PATH'; echo lokasi: \$(pwd); git pull origin main; composer install --no-dev --optimize-autoloader --no-interaction; php artisan migrate --force; php artisan route:clear && php artisan route:cache; php artisan config:clear && php artisan config:cache; php artisan storage:link 2>/dev/null || true; echo 'deploy selesai'"
+          if OUT2=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no -o BatchMode=yes "$SSH_USER@$SSH_HOST" "$REMOTE_CMD" 2>&1); then
+            echo "::notice title=DEPLOY OK::$(printf '%s' "$OUT2" | tr '\n' '|' | tail -c 400)"
+          else
+            echo "::error title=DEPLOY GAGAL::$(printf '%s' "$OUT2" | tr '\n' '|' | tail -c 400)"
+            exit 1
+          fi
