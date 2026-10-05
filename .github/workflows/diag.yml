@@ -9,7 +9,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Pasang front-controller apicms + diagnosa
+      - name: Cari API pengubah docroot + diagnosis rewrite
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -31,48 +31,30 @@ jobs:
             "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE' 2>&1
           export PATH="$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
           NEW="$HOME/apicms.ma-bumi.sch.id"
-          cd "$NEW" || exit 1
 
-          echo "== 1. BUAT FRONT CONTROLLER DI DOCROOT =="
-          printf '%s\n' '<?php' '' '// Docroot menunjuk ke root repo (bukan /public).' '// Teruskan ke front controller Laravel yang sebenarnya.' '' "require __DIR__.'/public/index.php';" > index.php
-          echo "    index.php dibuat ($(wc -c < index.php) byte)"
+          echo "== A. FUNGSI YANG TERSEDIA di modul Domain =="
+          uapi Domain 2>&1 | head -25 | sed 's/^/    /'
 
-          cat > .htaccess <<'HT'
-          <IfModule mod_rewrite.c>
-            RewriteEngine On
-            # Berkas/folder yang benar-benar ada -> sajikan langsung
-            RewriteCond %{REQUEST_FILENAME} -f [OR]
-            RewriteCond %{REQUEST_FILENAME} -d
-            RewriteRule ^ - [L]
-            # Aset publik Laravel (symlink storage)
-            RewriteRule ^storage/(.*)$ public/storage/$1 [L,NC]
-            # Sisanya -> front controller
-            RewriteRule ^ index.php [L]
-          </IfModule>
-          <FilesMatch "^\.">
-            Require all denied
-          </FilesMatch>
-          HT
-          echo "    .htaccess front-controller ditulis"
-
-          echo "== 2. UJI =="
-          for u in "https://apicms.ma-bumi.sch.id/" "https://apicms.ma-bumi.sch.id/api/settings" "https://apicms.ma-bumi.sch.id/.env" "https://apicms.ma-bumi.sch.id/up"; do
-            echo "    $u -> HTTP $(curl -sk -o /dev/null -m 15 -w '%{http_code}' "$u" 2>/dev/null)"
+          echo "== B. COBA SEMUA KANDIDAT (respons penuh) =="
+          for call in "Domain set_docroot" "DomainInfo set_docroot" "SubDomain set_docroot" "Domain edit_docroot" "SubDomain edit_docroot"; do
+            mod=$(echo $call | cut -d' ' -f1); fn=$(echo $call | cut -d' ' -f2)
+            echo "    --- uapi $mod $fn ---"
+            uapi $mod $fn domain=apicms.ma-bumi.sch.id root=apicms.ma-bumi.sch.id/public 2>&1 | grep -vE "^$" | head -8 | sed 's/^/      /'
           done
 
-          echo "== 3. HEADER / (siapa yang menjawab) =="
-          curl -sk -D - -o /dev/null -m 15 https://apicms.ma-bumi.sch.id/ 2>/dev/null | grep -iE "^HTTP|powered|content-type" | sed 's/^/    /'
+          echo "== C. UJI: APAKAH REWRITE DIBACA? (uji berkas statis & redirect) =="
+          echo "halo-statisp" > "$NEW/uji-statis.txt"
+          printf '%s\n' 'RewriteEngine On' 'RewriteRule ^uji-redirect$ /uji-statis.txt [R=302,L]' > "$NEW/uji-rewrite/.htaccess" 2>/dev/null || {
+            mkdir -p "$NEW/uji-rewrite"; printf '%s\n' 'RewriteEngine On' 'RewriteRule ^uji-redirect$ /uji-statis.txt [R=302,L]' > "$NEW/uji-rewrite/.htaccess"; }
+          echo "    /uji-statis.txt  -> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/uji-statis.txt)"
+          echo "    /uji-redirect    -> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/uji-redirect)"
+          echo "    /public/uji-statis.txt -> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/public/uji-statis.txt)"
+          echo "    /index.php       -> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/index.php)"
+          echo "    /public/index.php-> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/public/index.php)"
+          rm -f "$NEW/uji-statis.txt"; rm -rf "$NEW/uji-rewrite"
 
-          echo "== 4. ISI /api/settings =="
-          curl -sk -m 15 https://apicms.ma-bumi.sch.id/api/settings 2>/dev/null | head -c 160 | sed 's/^/    /'
-
-          echo "== 5. LOG LARAVEL (3 baris terakhir) =="
-          tail -3 storage/logs/laravel.log 2>/dev/null | cut -c1-200 | sed 's/^/    /'
-
-          echo "== 6. PUBLIC/.htaccess ADA? =="
-          [ -f public/.htaccess ] && echo "    ADA ($(wc -c < public/.htaccess) byte)" || echo "    TIDAK ADA"
-          echo "== 7. SYMLINK storage =="
-          ls -la public/storage 2>&1 | head -2 | sed 's/^/    /'
+          echo "== D. BERKAS DI DOCROOT =="
+          ls -la "$NEW" | head -12 | sed 's/^/    /'
           REMOTE
           )
           SAFE=$(printf '%s' "$OUT" | sed -e "s|$SSH_USER|USER|g" -e "s|$SSH_HOST|HOST|g" -e 's|/home/[^/ ]*|/home/USER|g')
