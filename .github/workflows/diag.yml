@@ -1,0 +1,46 @@
+name: Diagnostik cPanel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Periksa domain & folder hosting
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -uo pipefail
+          PORT="${SSH_PORT:-22}"
+          mkdir -p ~/.ssh
+          RAW=$(printf '%s' "$SSH_KEY" | tr -d '\r' | sed 's/\\n/\n/g')
+          printf '%s\n' "$RAW" > /tmp/kt; chmod 600 /tmp/kt
+          if ssh-keygen -y -f /tmp/kt >/dev/null 2>&1; then cp /tmp/kt ~/.ssh/deploy_key; else
+            echo "::error title=KEY::gagal"; exit 1; fi
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          OUT=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no -o BatchMode=yes \
+            "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE' 2>&1
+          export PATH="$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+          echo "== DOMAIN TERDAFTAR =="
+          uapi DomainInfo list_domains 2>&1 | head -40
+          echo "== ISI HOME =="
+          ls -la "$HOME" | head -22
+          echo "== FOLDER PENTING =="
+          for p in ma-bumi.sch.id api-cms-bumi apicms.ma-bumi.sch.id; do
+            if [ -e "$HOME/$p" ]; then echo "  ADA   $p ($(ls -1 "$HOME/$p" 2>/dev/null | wc -l) isi)"; else echo "  TIDAK $p"; fi
+          done
+          echo "== .env BACKEND (nilai URL saja) =="
+          grep -E '^(APP_URL|APP_ENV|APP_DEBUG|FRONTEND_URL)=' "$HOME/api-cms-bumi/.env" 2>/dev/null || echo "  tidak terbaca"
+          REMOTE
+          )
+          SAFE=$(printf '%s' "$OUT" | sed -e "s|$SSH_USER|USER|g" -e "s|$SSH_HOST|HOST|g" -e 's|/home/[^/ ]*|/home/USER|g')
+          echo "::warning title=DIAGB64::$(printf '%s' "$SAFE" | base64 -w0)"
