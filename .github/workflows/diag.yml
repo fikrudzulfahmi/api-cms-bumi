@@ -9,7 +9,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Cari API pengubah docroot + diagnosis rewrite
+      - name: Buat ulang subdomain apicms dengan docroot benar
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -31,30 +31,47 @@ jobs:
             "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE' 2>&1
           export PATH="$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
           NEW="$HOME/apicms.ma-bumi.sch.id"
+          BAK="$HOME/_apicms_repo_bak"
 
-          echo "== A. FUNGSI YANG TERSEDIA di modul Domain =="
-          uapi Domain 2>&1 | head -25 | sed 's/^/    /'
+          echo "== 1. AMANKAN REPO (pindah keluar docroot) =="
+          rm -rf "$BAK"; mkdir -p "$BAK"
+          if [ -f "$NEW/artisan" ]; then
+            cp -a "$NEW/." "$BAK/" && echo "    tersalin ke _apicms_repo_bak ($(ls -1 "$BAK" | wc -l) item)"
+          fi
 
-          echo "== B. COBA SEMUA KANDIDAT (respons penuh) =="
-          for call in "Domain set_docroot" "DomainInfo set_docroot" "SubDomain set_docroot" "Domain edit_docroot" "SubDomain edit_docroot"; do
-            mod=$(echo $call | cut -d' ' -f1); fn=$(echo $call | cut -d' ' -f2)
-            echo "    --- uapi $mod $fn ---"
-            uapi $mod $fn domain=apicms.ma-bumi.sch.id root=apicms.ma-bumi.sch.id/public 2>&1 | grep -vE "^$" | head -8 | sed 's/^/      /'
+          echo "== 2. HAPUS SUBDOMAIN (respons penuh) =="
+          uapi SubDomain delsubdomain domain=apicms rootdomain=ma-bumi.sch.id 2>&1 | grep -vE "^$" | head -12 | sed 's/^/    /'
+
+          echo "== 3. BUAT ULANG dengan docroot /public (respons penuh) =="
+          uapi SubDomain addsubdomain domain=apicms rootdomain=ma-bumi.sch.id dir=apicms.ma-bumi.sch.id/public 2>&1 | grep -vE "^$" | head -12 | sed 's/^/    /'
+
+          echo "== 4. DOCROOT HASIL =="
+          uapi DomainInfo single_domain_data domain=apicms.ma-bumi.sch.id 2>&1 | grep -iE "documentroot|servername" | head -3 | sed 's/^/    /'
+
+          echo "== 5. KEMBALIKAN REPO =="
+          if [ -f "$BAK/artisan" ]; then
+            mkdir -p "$NEW"
+            cp -a "$BAK/." "$NEW/" && echo "    dikembalikan"
+          fi
+          rm -f "$NEW/index.php"   # buang front-controller lama (tidak diperlukan bila docroot = /public)
+          [ -f "$NEW/artisan" ] && echo "    artisan: ADA" || echo "    artisan: TIDAK ADA"
+
+          echo "== 6. PERBAIKI SYMLINK storage + CACHE =="
+          cd "$NEW" || exit 1
+          rm -f public/storage
+          php artisan storage:link 2>&1 | tail -1 | sed 's/^/    /'
+          php artisan config:clear >/dev/null 2>&1; php artisan route:clear >/dev/null 2>&1; php artisan view:clear >/dev/null 2>&1
+          php artisan config:cache 2>&1 | tail -1 | sed 's/^/    /'
+          php artisan route:cache  2>&1 | tail -1 | sed 's/^/    /'
+          ls -la public/storage 2>&1 | head -1 | sed 's/^/    /'
+
+          echo "== 7. UJI (tunggu DNS/vhost 5 detik) =="
+          sleep 5
+          for u in "https://apicms.ma-bumi.sch.id/" "https://apicms.ma-bumi.sch.id/api/settings" "https://apicms.ma-bumi.sch.id/.env" "https://apicms.ma-bumi.sch.id/up"; do
+            echo "    $u -> HTTP $(curl -sk -o /dev/null -m 15 -w '%{http_code}' "$u" 2>/dev/null)"
           done
-
-          echo "== C. UJI: APAKAH REWRITE DIBACA? (uji berkas statis & redirect) =="
-          echo "halo-statisp" > "$NEW/uji-statis.txt"
-          printf '%s\n' 'RewriteEngine On' 'RewriteRule ^uji-redirect$ /uji-statis.txt [R=302,L]' > "$NEW/uji-rewrite/.htaccess" 2>/dev/null || {
-            mkdir -p "$NEW/uji-rewrite"; printf '%s\n' 'RewriteEngine On' 'RewriteRule ^uji-redirect$ /uji-statis.txt [R=302,L]' > "$NEW/uji-rewrite/.htaccess"; }
-          echo "    /uji-statis.txt  -> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/uji-statis.txt)"
-          echo "    /uji-redirect    -> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/uji-redirect)"
-          echo "    /public/uji-statis.txt -> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/public/uji-statis.txt)"
-          echo "    /index.php       -> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/index.php)"
-          echo "    /public/index.php-> HTTP $(curl -sk -o /dev/null -m 12 -w '%{http_code}' https://apicms.ma-bumi.sch.id/public/index.php)"
-          rm -f "$NEW/uji-statis.txt"; rm -rf "$NEW/uji-rewrite"
-
-          echo "== D. BERKAS DI DOCROOT =="
-          ls -la "$NEW" | head -12 | sed 's/^/    /'
+          echo "== 8. HEADER =="
+          curl -sk -D - -o /dev/null -m 15 https://apicms.ma-bumi.sch.id/ 2>/dev/null | grep -iE "^HTTP|powered|content-type" | sed 's/^/    /'
           REMOTE
           )
           SAFE=$(printf '%s' "$OUT" | sed -e "s|$SSH_USER|USER|g" -e "s|$SSH_HOST|HOST|g" -e 's|/home/[^/ ]*|/home/USER|g')
