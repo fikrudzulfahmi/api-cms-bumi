@@ -9,7 +9,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Siapkan migrasi domain ma-bumi.sch.id
+      - name: Amankan docroot + setel ke /public
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -30,47 +30,41 @@ jobs:
           OUT=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no -o BatchMode=yes \
             "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE' 2>&1
           export PATH="$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+          NEW="$HOME/apicms.ma-bumi.sch.id"
 
-          echo "== 1. DOCROOT DOMAIN SEKARANG =="
-          for d in ma-bumi.sch.id apicms.ma-bumi.sch.id api-bumi.backupmate.biz.id; do
-            echo "  --- $d ---"
-            uapi DomainInfo single_domain_data domain=$d 2>&1 | grep -iE "documentroot|servername|^ *type" | head -3 | sed 's/^/    /'
+          echo "== 1. SANGGAHAN DARURAT: kunci akses langsung ke berkas repo =="
+          cat > "$NEW/.htaccess" <<'HT'
+          # Docroot sedang menunjuk ke root repo (bukan /public).
+          # Cegah .env & kode sumber terbaca lewat web.
+          <IfModule mod_rewrite.c>
+            RewriteEngine On
+            RewriteRule ^(?!public/).* - [F,L]
+          </IfModule>
+          <FilesMatch "^\.">
+            Require all denied
+          </FilesMatch>
+          HT
+          chmod 644 "$NEW/.htaccess"
+          echo "    .htaccess pelindung ditulis ($(wc -c < "$NEW/.htaccess") byte)"
+
+          echo "== 2. UJI: apakah .env bisa diunduh dari luar? =="
+          for u in "https://apicms.ma-bumi.sch.id/.env" "http://apicms.ma-bumi.sch.id/.env"; do
+            code=$(curl -sk -o /dev/null -m 12 -w '%{http_code}' "$u" 2>/dev/null)
+            echo "    $u -> HTTP $code"
           done
 
-          echo "== 2. DAFTARKAN SUBDOMAIN apicms (docroot ke folder public) =="
-          uapi SubDomain addsubdomain domain=apicms rootdomain=ma-bumi.sch.id dir=apicms.ma-bumi.sch.id/public 2>&1 | head -14
+          echo "== 3. COBA SET DOCROOT lewat UAPI =="
+          for fn in "Domain set_docroot" "DomainInfo set_docroot" "SubDomain set_docroot" "Domain update_docroot"; do
+            mod=$(echo $fn | cut -d' ' -f1); f=$(echo $fn | cut -d' ' -f2)
+            res=$(uapi $mod $f domain=apicms.ma-bumi.sch.id root=apicms.ma-bumi.sch.id/public 2>&1 | grep -E "^(result|  status|  errors|-)" | head -3 | tr '\n' ' ')
+            echo "    $fn -> ${res:-(tidak ada respons)}"
+          done
 
-          echo "== 3. DOCROOT SETELAH DIDAFTARKAN =="
-          uapi DomainInfo single_domain_data domain=apicms.ma-bumi.sch.id 2>&1 | grep -iE "documentroot|servername" | head -3 | sed 's/^/    /'
+          echo "== 4. SUBDOMAIN YANG ADA =="
+          uapi SubDomain list_subdomains 2>&1 | grep -iE "apicms|ma-bumi" | head -6 | sed 's/^/    /'
 
-          echo "== 4. SALIN BACKEND ke folder baru =="
-          if [ -f "$HOME/apicms.ma-bumi.sch.id/artisan" ]; then
-            echo "  sudah ada artisan — salinan dilewati"
-          else
-            rm -rf "$HOME/apicms.ma-bumi.sch.id"/* "$HOME/apicms.ma-bumi.sch.id"/.[!.]* 2>/dev/null || true
-            cp -a "$HOME/api-cms-bumi/." "$HOME/apicms.ma-bumi.sch.id/" && echo "  BERHASIL disalin"
-          fi
-          ls -1 "$HOME/apicms.ma-bumi.sch.id" | head -10 | sed 's/^/    /'
-
-          echo "== 5. PERBAIKI .env SALINAN =="
-          E="$HOME/apicms.ma-bumi.sch.id/.env"
-          if [ -f "$E" ]; then
-            sed -i 's#^APP_URL=.*#APP_URL=https://apicms.ma-bumi.sch.id#' "$E"
-            if grep -q '^FRONTEND_URL=' "$E"; then
-              sed -i 's#^FRONTEND_URL=.*#FRONTEND_URL=https://ma-bumi.sch.id#' "$E"
-            else
-              echo 'FRONTEND_URL=https://ma-bumi.sch.id' >> "$E"
-            fi
-            grep -E '^(APP_URL|FRONTEND_URL|APP_ENV|APP_DEBUG)=' "$E" | sed 's/^/    /'
-          else
-            echo "    .env TIDAK ADA di salinan!"
-          fi
-
-          echo "== 6. ISI FOLDER FRONTEND =="
-          ls -la "$HOME/ma-bumi.sch.id" | head -8 | sed 's/^/    /'
-
-          echo "== 7. JALANKAN AUTOSSL =="
-          uapi SSL start_autossl_check 2>&1 | grep -iE "status|message" | head -3 | sed 's/^/    /'
+          echo "== 5. DOCROOT SAAT INI =="
+          uapi DomainInfo single_domain_data domain=apicms.ma-bumi.sch.id 2>&1 | grep -iE "documentroot" | head -2 | sed 's/^/    /'
           REMOTE
           )
           SAFE=$(printf '%s' "$OUT" | sed -e "s|$SSH_USER|USER|g" -e "s|$SSH_HOST|HOST|g" -e 's|/home/[^/ ]*|/home/USER|g')
