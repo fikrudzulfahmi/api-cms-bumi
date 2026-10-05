@@ -9,7 +9,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Pulihkan backend apicms + pasang jembatan ke /public
+      - name: Pasang front-controller apicms + diagnosa
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -31,70 +31,48 @@ jobs:
             "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE' 2>&1
           export PATH="$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
           NEW="$HOME/apicms.ma-bumi.sch.id"
-          SRC="$HOME/api-cms-bumi"
+          cd "$NEW" || exit 1
 
-          echo "== 1. DI MANA REPO SEKARANG =="
-          for d in "$NEW" "$HOME/_apicms_lama" "$SRC"; do
-            if [ -e "$d" ]; then
-              echo "    ADA   $(basename "$d") -> $(ls -1 "$d" 2>/dev/null | wc -l) isi | artisan: $([ -f "$d/artisan" ] && echo YA || echo tidak)"
-            else
-              echo "    TIDAK $(basename "$d")"
-            fi
-          done
+          echo "== 1. BUAT FRONT CONTROLLER DI DOCROOT =="
+          printf '%s\n' '<?php' '' '// Docroot menunjuk ke root repo (bukan /public).' '// Teruskan ke front controller Laravel yang sebenarnya.' '' "require __DIR__.'/public/index.php';" > index.php
+          echo "    index.php dibuat ($(wc -c < index.php) byte)"
 
-          echo "== 2. PASTIKAN REPO ADA DI DOCROOT =="
-          mkdir -p "$NEW"
-          if [ ! -f "$NEW/artisan" ]; then
-            if [ -f "$HOME/_apicms_lama/artisan" ]; then
-              cp -a "$HOME/_apicms_lama/." "$NEW/" && echo "    disalin dari _apicms_lama"
-            else
-              cp -a "$SRC/." "$NEW/" && echo "    disalin dari api-cms-bumi"
-            fi
-          else
-            echo "    artisan sudah ada — dilewati"
-          fi
-          echo "    isi sekarang: $(ls -1 "$NEW" | wc -l) item | artisan: $([ -f "$NEW/artisan" ] && echo YA || echo TIDAK)"
-
-          echo "== 3. .env =="
-          E="$NEW/.env"
-          sed -i 's#^APP_URL=.*#APP_URL=https://apicms.ma-bumi.sch.id#' "$E"
-          grep -q '^FRONTEND_URL=' "$E" && sed -i 's#^FRONTEND_URL=.*#FRONTEND_URL=https://ma-bumi.sch.id#' "$E" || echo 'FRONTEND_URL=https://ma-bumi.sch.id' >> "$E"
-          grep -E '^(APP_URL|APP_ENV|APP_DEBUG|FRONTEND_URL)=' "$E" | sed 's/^/    /'
-
-          echo "== 4. JEMBATAN KE /public (docroot tidak bisa diubah via API) =="
-          cat > "$NEW/.htaccess" <<'HT'
-          # Docroot menunjuk ke root repo. Teruskan semua permintaan ke public/
-          # supaya .env & kode sumber tidak bisa diakses dari web.
-          # (Kalau docroot kelak diarahkan ke /public, berkas ini tidak terpakai.)
+          cat > .htaccess <<'HT'
           <IfModule mod_rewrite.c>
             RewriteEngine On
-            RewriteCond %{REQUEST_URI} !^/public/
-            RewriteRule ^(.*)$ public/$1 [L]
+            # Berkas/folder yang benar-benar ada -> sajikan langsung
+            RewriteCond %{REQUEST_FILENAME} -f [OR]
+            RewriteCond %{REQUEST_FILENAME} -d
+            RewriteRule ^ - [L]
+            # Aset publik Laravel (symlink storage)
+            RewriteRule ^storage/(.*)$ public/storage/$1 [L,NC]
+            # Sisanya -> front controller
+            RewriteRule ^ index.php [L]
           </IfModule>
           <FilesMatch "^\.">
             Require all denied
           </FilesMatch>
           HT
-          chmod 644 "$NEW/.htaccess"
-          echo "    .htaccess ditulis"
+          echo "    .htaccess front-controller ditulis"
 
-          echo "== 5. BERSIHKAN CACHE LAMA + BANGUN ULANG =="
-          cd "$NEW" || exit 1
-          php artisan config:clear >/dev/null 2>&1; php artisan route:clear >/dev/null 2>&1; php artisan view:clear >/dev/null 2>&1
-          php artisan storage:link 2>&1 | tail -1 | sed 's/^/    /'
-          php artisan config:cache 2>&1 | tail -1 | sed 's/^/    /'
-          php artisan route:cache  2>&1 | tail -1 | sed 's/^/    /'
-
-          echo "== 6. NILAI KONFIG APLIKASI BARU =="
-          php artisan tinker --execute="echo 'app.url='.config('app.url').PHP_EOL; echo 'frontend='.config('cms.frontend_url').PHP_EOL;" 2>&1 | tail -3 | sed 's/^/    /'
-
-          echo "== 7. UJI ENDPOINT =="
-          for u in "https://apicms.ma-bumi.sch.id/" "https://apicms.ma-bumi.sch.id/api/settings" "https://apicms.ma-bumi.sch.id/.env" "https://apicms.ma-bumi.sch.id/artisan"; do
+          echo "== 2. UJI =="
+          for u in "https://apicms.ma-bumi.sch.id/" "https://apicms.ma-bumi.sch.id/api/settings" "https://apicms.ma-bumi.sch.id/.env" "https://apicms.ma-bumi.sch.id/up"; do
             echo "    $u -> HTTP $(curl -sk -o /dev/null -m 15 -w '%{http_code}' "$u" 2>/dev/null)"
           done
 
-          echo "== 8. SUBDOMAIN TERDAFTAR =="
-          uapi SubDomain list_subdomains 2>&1 | grep -iE "apicms" | head -3 | sed 's/^/    /'
+          echo "== 3. HEADER / (siapa yang menjawab) =="
+          curl -sk -D - -o /dev/null -m 15 https://apicms.ma-bumi.sch.id/ 2>/dev/null | grep -iE "^HTTP|powered|content-type" | sed 's/^/    /'
+
+          echo "== 4. ISI /api/settings =="
+          curl -sk -m 15 https://apicms.ma-bumi.sch.id/api/settings 2>/dev/null | head -c 160 | sed 's/^/    /'
+
+          echo "== 5. LOG LARAVEL (3 baris terakhir) =="
+          tail -3 storage/logs/laravel.log 2>/dev/null | cut -c1-200 | sed 's/^/    /'
+
+          echo "== 6. PUBLIC/.htaccess ADA? =="
+          [ -f public/.htaccess ] && echo "    ADA ($(wc -c < public/.htaccess) byte)" || echo "    TIDAK ADA"
+          echo "== 7. SYMLINK storage =="
+          ls -la public/storage 2>&1 | head -2 | sed 's/^/    /'
           REMOTE
           )
           SAFE=$(printf '%s' "$OUT" | sed -e "s|$SSH_USER|USER|g" -e "s|$SSH_HOST|HOST|g" -e 's|/home/[^/ ]*|/home/USER|g')
