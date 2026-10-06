@@ -34,9 +34,11 @@ class GambarOptim
     /**
      * Optimasi berkas gambar ($path = path absolut).
      *
+     * @param  bool  $kering  true = hanya mengukur (berkas asli TIDAK disentuh).
+     * @param  int|null  $ukuranHasil  diisi ukuran berkas hasil (byte).
      * @return string|null path baru (berakhiran .webp) bila berhasil, null bila dibiarkan.
      */
-    public static function jalankan(string $path): ?string
+    public static function jalankan(string $path, bool $kering = false, ?int &$ukuranHasil = null): ?string
     {
         if (! self::didukung() || ! is_file($path)) {
             return null;
@@ -82,27 +84,40 @@ class GambarOptim
         }
 
         $tujuan = preg_replace('/\.[a-z0-9]+$/i', '', $path).'.webp';
-        $berhasil = @imagewebp($gambar, $tujuan, self::KUALITAS);
+
+        // Mode kering: hasil ditulis ke berkas sementara supaya berkas asli aman.
+        $sasaran = $kering ? $path.'.uji' : $tujuan;
+
+        $berhasil = @imagewebp($gambar, $sasaran, self::KUALITAS);
         imagedestroy($gambar);
 
-        if (! $berhasil || ! is_file($tujuan)) {
-            @unlink($tujuan);
+        if (! $berhasil || ! is_file($sasaran)) {
+            @unlink($sasaran);
 
             return null;
+        }
+
+        $ukuranBaru = (int) filesize($sasaran);
+        $ukuranHasil = $ukuranBaru;
+
+        if ($kering) {
+            @unlink($sasaran);   // hanya untuk mengukur
+
+            return $ukuranBaru < (int) filesize($path) ? $tujuan : null;
         }
 
         // Hanya pakai hasil WebP kalau memang lebih ringan dari aslinya.
-        if (filesize($tujuan) >= filesize($path)) {
-            @unlink($tujuan);
+        if ($ukuranBaru >= (int) filesize($path)) {
+            @unlink($sasaran);
 
             return null;
         }
 
-        if ($tujuan !== $path) {
+        if ($sasaran !== $path) {
             @unlink($path);
         }
 
-        return $tujuan;
+        return $sasaran;
     }
 
     /**
