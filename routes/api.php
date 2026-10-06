@@ -2,6 +2,9 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ActivityLogController;
+use App\Http\Controllers\Api\CategoryController;
+use App\Http\Controllers\Api\CommentController;
+use App\Http\Controllers\Api\PostInteractionController;
 use App\Http\Controllers\Api\ExtracurricularController;
 use App\Http\Controllers\Api\FacilityController;
 use App\Http\Controllers\Api\FeedbackController;
@@ -25,6 +28,17 @@ Route::get('/profil', [ProfileController::class, 'show']);
 Route::get('/guru-karyawan', [TeacherController::class, 'index']);
 Route::get('/berita', [PostController::class, 'index']);
 Route::get('/berita/{slug}', [PostController::class, 'show']);
+
+// Interaksi pembaca (publik) — dibatasi agar tidak disalahgunakan.
+Route::middleware('throttle:60,1')->group(function () {
+    Route::post('/berita/{slug}/view', [PostInteractionController::class, 'view']);
+    Route::get('/berita/{slug}/reaksi', [PostInteractionController::class, 'reaksi']);
+    Route::post('/berita/{slug}/like', [PostInteractionController::class, 'like']);
+    Route::get('/berita/{slug}/komentar', [PostInteractionController::class, 'komentar']);
+    Route::post('/berita/{slug}/komentar', [PostInteractionController::class, 'kirimKomentar']);
+});
+
+Route::get('/kategori', [CategoryController::class, 'index']);
 Route::get('/umpan-balik', [FeedbackController::class, 'index']);
 Route::get('/jurusan', [MajorController::class, 'index']);
 Route::get('/jurusan/{slug}', [MajorController::class, 'show']);
@@ -49,6 +63,7 @@ Route::prefix('admin')->group(function () {
 
         // Berita: penulis hanya bisa mengelola miliknya sendiri (dicek di controller)
         Route::get('/berita', [PostController::class, 'adminIndex']);
+        Route::get('/berita/analitik', [PostController::class, 'adminAnalitik']);
         Route::post('/berita', [PostController::class, 'store']);
         Route::put('/berita/{post}', [PostController::class, 'update']);
         Route::delete('/berita/{post}', [PostController::class, 'destroy']);
@@ -64,6 +79,17 @@ Route::prefix('admin')->group(function () {
             Route::post('/pengguna', [UserController::class, 'store']);
             Route::put('/pengguna/{user}', [UserController::class, 'update']);
             Route::delete('/pengguna/{user}', [UserController::class, 'destroy']);
+
+            // Kategori berita (bisa ditambah/diatur sendiri)
+            Route::get('/kategori', [CategoryController::class, 'adminIndex']);
+            Route::post('/kategori', [CategoryController::class, 'store']);
+            Route::put('/kategori/{category}', [CategoryController::class, 'update']);
+            Route::delete('/kategori/{category}', [CategoryController::class, 'destroy']);
+
+            // Moderasi komentar berita
+            Route::get('/komentar', [CommentController::class, 'index']);
+            Route::put('/komentar/{comment}', [CommentController::class, 'update']);
+            Route::delete('/komentar/{comment}', [CommentController::class, 'destroy']);
 
             // Jejak audit — BACA SAJA (tidak ada route hapus/ubah oleh desain)
             Route::get('/log-aktivitas', [ActivityLogController::class, 'index']);

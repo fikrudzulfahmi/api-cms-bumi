@@ -4,20 +4,33 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Post;
+use App\Models\PostComment;
+use App\Models\PostLike;
 use App\Support\Slug;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class PostController extends Controller
 {
+    /** Query dasar: penulis + hitungan interaksi (dipakai daftar & detail). */
+    protected function dasar()
+    {
+        return Post::with('author')->withCount([
+            'likes as jumlah_like' => fn ($q) => $q->where('tipe', PostLike::LIKE),
+            'likes as jumlah_dislike' => fn ($q) => $q->where('tipe', PostLike::DISLIKE),
+            'komentar as jumlah_komentar' => fn ($q) => $q->where('is_approved', true),
+        ]);
+    }
+
     /**
      * Publik — berita/pengumuman/prestasi terpublikasi.
-     * Mendukung ?kategori=, ?limit=, ?search=.
+     * Mendukung ?kategori=, ?limit=, ?search=, ?urut=terbaru|trending.
      */
     public function index(Request $request)
     {
-        $query = Post::with('author')->published()->latest('tanggal')->latest('id');
+        $query = $this->dasar()->published();
 
-        if ($request->filled('kategori') && in_array($request->kategori, Post::KATEGORI, true)) {
+        if ($request->filled('kategori')) {
             $query->kategori($request->kategori);
         }
 
@@ -28,6 +41,13 @@ class PostController extends Controller
             });
         }
 
+        // trending = paling banyak dibaca; bawaan = terbaru.
+        if ($request->input('urut') === 'trending') {
+            $query->orderByDesc('views')->orderByDesc('id');
+        } else {
+            $query->latest('tanggal')->latest('id');
+        }
+
         if ($request->filled('limit')) {
             return response()->json(['data' => $query->limit((int) $request->limit)->get()]);
         }
@@ -35,29 +55,28 @@ class PostController extends Controller
         return response()->json($query->paginate(12));
     }
 
-    /**
-     * Publik — detail berita berdasarkan slug.
-     */
+    /** Publik — detail berita berdasarkan slug. */
     public function show(string $slug)
     {
-        $post = Post::with('author')->published()->where('slug', $slug)->firstOrFail();
+        $post = $this->dasar()->published()->where('slug', $slug)->firstOrFail();
 
         return response()->json(['data' => $post]);
     }
 
     /**
-     * Admin/Penulis — daftar berita (termasuk draft).
+     * Admin/Penulis — daftar berita (termasuk draft) lengkap dengan statistik:
+     * pengunjung, like, dislike, komentar, dan rating.
      * Penulis hanya melihat berita miliknya sendiri.
      */
     public function adminIndex(Request $request)
     {
-        $query = Post::with('author')->latest('id');
+        $query = $this->dasar()->latest('id');
 
         if (! $request->user()->isAdmin()) {
             $query->where('user_id', $request->user()->id);
         }
 
-        if ($request->filled('kategori') && in_array($request->kategori, Post::KATEGORI, true)) {
+        if ($request->filled('kategori')) {
             $query->kategori($request->kategori);
         }
 
@@ -65,7 +84,39 @@ class PostController extends Controller
             $query->where('judul', 'like', '%'.$request->search.'%');
         }
 
+        if ($request->input('urut') === 'trending') {
+            $query->orderByDesc('views');
+        } elseif ($request->input('urut') === 'populer') {
+            $query->withCount(['likes as _urut_like' => fn ($q) => $q->where('tipe', PostLike::LIKE)])
+                ->orderByDesc('_urut_like');
+        }
+
         return response()->json(['data' => $query->get()]);
+    }
+
+    /**
+     * Admin — rekap analisis berita untuk dashboard:
+     * total pengunjung/like/dislike/komentar, rating rata-rata, dan 5 berita terpopuler.
+     */
+    public function adminAnalitik(Request $request)
+    {
+        $total = [
+            'berita' => Post::count(),
+            'terbit' => Post::published()->count(),
+            'pengunjung' => (int) Post::sum('views'),
+            'like' => PostLike::like()->count(),
+            'dislike' => PostLike::dislike()->count(),
+            'komentar' => PostComment::disetujui()->count(),
+            'komentar_menunggu' => PostComment::where('is_approved', false)->count(),
+        ];
+
+        $terbit = $this->dasar()->published()->get();
+        $total['rating_rata'] = $terbit->isEmpty() ? 0.0 : round($terbit->avg(fn ($p) => $p->rating), 1);
+
+        return response()->json(['data' => [
+            'total' => $total,
+            'terpopuler' => $this->dasar()->published()->orderByDesc('views')->limit(5)->get(),
+        ]]);
     }
 
     public function store(Request $request)
@@ -121,7 +172,8 @@ class PostController extends Controller
         return [
             'judul' => 'required|string|max:255',
             'slug' => 'nullable|string|max:255',
-            'kategori' => 'required|in:berita,pengumuman,prestasi',
+            // Kategori diambil dari daftar yang bisa diatur admin di panel.
+            'kategori' => ['required', 'string', 'max:60', Rule::in(Post::daftarKategori())],
             'gambar' => 'nullable|string|max:500',
             'ringkasan' => 'nullable|string',
             'konten' => 'nullable|string',

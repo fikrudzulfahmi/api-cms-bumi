@@ -93,7 +93,7 @@ trait LogsActivity
     /** Kolom yang tidak perlu dicatat. */
     protected function activityIgnored(): array
     {
-        return ['updated_at', 'remember_token', 'email_verified_at'];
+        return ['updated_at', 'remember_token', 'email_verified_at', 'views'];
     }
 
     protected function activitySnapshot(): array
