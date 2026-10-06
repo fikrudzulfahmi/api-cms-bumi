@@ -94,13 +94,16 @@ class PostInteractionController extends Controller
         ]]);
     }
 
-    /** Komentar yang sudah disetujui. */
+    /** Komentar yang sudah disetujui — termasuk balasan pengelola bila ada. */
     public function komentar(string $slug)
     {
         $post = Post::published()->where('slug', $slug)->firstOrFail();
 
         return response()->json([
-            'data' => $post->komentar()->disetujui()->latest()->get(['id', 'nama', 'isi', 'created_at']),
+            'data' => $post->komentar()->disetujui()->latest()->get([
+                'id', 'nama', 'isi', 'created_at',
+                'balasan', 'balasan_at', 'balasan_oleh',
+            ]),
         ]);
     }
 

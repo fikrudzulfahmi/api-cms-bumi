@@ -55,6 +55,13 @@ Route::prefix('admin')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
 
     Route::middleware('auth:sanctum')->group(function () {
+        // Komentar berita — admin melihat semua, penulis hanya berita miliknya.
+        // Sengaja di luar grup 'admin' agar penulis bisa membalas komentarnya.
+        Route::get('/komentar', [CommentController::class, 'index']);
+        Route::put('/komentar/{comment}', [CommentController::class, 'update']);
+        Route::post('/komentar/{comment}/balas', [CommentController::class, 'balas']);
+        Route::delete('/komentar/{comment}/balasan', [CommentController::class, 'hapusBalasan']);
+        Route::delete('/komentar/{comment}', [CommentController::class, 'destroy']);
         // --- Bisa diakses admin & penulis ---
         Route::get('/me', [AuthController::class, 'me']);
         Route::post('/logout', [AuthController::class, 'logout']);
@@ -86,10 +93,7 @@ Route::prefix('admin')->group(function () {
             Route::put('/kategori/{category}', [CategoryController::class, 'update']);
             Route::delete('/kategori/{category}', [CategoryController::class, 'destroy']);
 
-            // Moderasi komentar berita
-            Route::get('/komentar', [CommentController::class, 'index']);
-            Route::put('/komentar/{comment}', [CommentController::class, 'update']);
-            Route::delete('/komentar/{comment}', [CommentController::class, 'destroy']);
+            // (Komentar berita TIDAK di sini — penulis juga perlu akses, lihat grup auth di atas)
 
             // Jejak audit — BACA SAJA (tidak ada route hapus/ubah oleh desain)
             Route::get('/log-aktivitas', [ActivityLogController::class, 'index']);
