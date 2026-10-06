@@ -53,6 +53,89 @@ class ActivityLogController extends Controller
         ]]);
     }
 
+    /** Nama entitas yang ramah dibaca (subject_type di log = nama kelas model). */
+    public const JENIS = [
+        'Post' => 'Berita',
+        'Teacher' => 'Guru & Karyawan',
+        'Major' => 'Jurusan',
+        'Facility' => 'Fasilitas',
+        'Extracurricular' => 'Ekstrakurikuler',
+        'Gallery' => 'Galeri',
+        'Feedback' => 'Umpan Balik',
+        'Profile' => 'Profil Sekolah',
+        'Setting' => 'Pengaturan',
+        'User' => 'Akun Pengguna',
+    ];
+
+    /**
+     * Data untuk beranda panel admin: apa yang terjadi, siapa yang mengerjakan,
+     * dan berapa banyak konten yang dibuat/diubah/dihapus.
+     */
+    public function statistik(Request $request)
+    {
+        $hari = min(max((int) $request->input('hari', 30), 1), 365);
+        $sejak = now()->subDays($hari)->startOfDay();
+
+        $mentah = ActivityLog::select('subject_type', 'event', DB::raw('count(*) as jumlah'))
+            ->where('created_at', '>=', $sejak)
+            ->whereIn('event', ['buat', 'ubah', 'hapus'])
+            ->whereNotNull('subject_type')
+            ->groupBy('subject_type', 'event')
+            ->get()
+            ->groupBy('subject_type');
+
+        $perJenis = $mentah
+            ->map(function ($grup, $jenis) {
+                $ambil = fn ($ev) => (int) $grup->where('event', $ev)->sum('jumlah');
+
+                return [
+                    'jenis' => self::JENIS[$jenis] ?? $jenis,
+                    'kode' => $jenis,
+                    'buat' => $ambil('buat'),
+                    'ubah' => $ambil('ubah'),
+                    'hapus' => $ambil('hapus'),
+                    'total' => $ambil('buat') + $ambil('ubah') + $ambil('hapus'),
+                ];
+            })
+            ->sortByDesc('total')
+            ->values();
+
+        // Aktivitas harian 14 hari terakhir untuk grafik batang ringkas.
+        $perHari = ActivityLog::select(DB::raw('DATE(created_at) as tanggal'), DB::raw('count(*) as jumlah'))
+            ->where('created_at', '>=', now()->subDays(13)->startOfDay())
+            ->groupBy('tanggal')
+            ->pluck('jumlah', 'tanggal');
+
+        $harian = [];
+        for ($i = 13; $i >= 0; $i--) {
+            $tanggal = now()->subDays($i)->toDateString();
+            $harian[] = ['tanggal' => $tanggal, 'jumlah' => (int) ($perHari[$tanggal] ?? 0)];
+        }
+
+        $sehari = now()->subDay();
+
+        return response()->json(['data' => [
+            'rentang_hari' => $hari,
+            'per_jenis' => $perJenis,
+            'total' => [
+                'buat' => (int) $perJenis->sum('buat'),
+                'ubah' => (int) $perJenis->sum('ubah'),
+                'hapus' => (int) $perJenis->sum('hapus'),
+            ],
+            'harian' => $harian,
+            'terbaru' => ActivityLog::orderByDesc('id')->limit(10)->get(),
+            'pantau' => [
+                'total_24jam' => ActivityLog::where('created_at', '>=', $sehari)->count(),
+                'critical_24jam' => ActivityLog::where('severity', 'critical')->where('created_at', '>=', $sehari)->count(),
+                'warning_24jam' => ActivityLog::where('severity', 'warning')->where('created_at', '>=', $sehari)->count(),
+                'login_gagal_24jam' => ActivityLog::where('event', 'login_gagal')->where('created_at', '>=', $sehari)->count(),
+                'unggah_24jam' => ActivityLog::where('event', 'unggah_berkas')->where('created_at', '>=', $sehari)->count(),
+                'pengguna_24jam' => ActivityLog::where('created_at', '>=', $sehari)->whereNotNull('user_id')->distinct()->count('user_id'),
+            ],
+            'rantai' => ActivityLog::verifyChain(),
+        ]]);
+    }
+
     /** Periksa keutuhan rantai hash (deteksi manipulasi log). */
     public function verifikasi()
     {

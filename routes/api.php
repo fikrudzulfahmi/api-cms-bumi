@@ -68,6 +68,7 @@ Route::prefix('admin')->group(function () {
             // Jejak audit — BACA SAJA (tidak ada route hapus/ubah oleh desain)
             Route::get('/log-aktivitas', [ActivityLogController::class, 'index']);
             Route::get('/log-aktivitas/ringkasan', [ActivityLogController::class, 'ringkasan']);
+            Route::get('/log-aktivitas/statistik', [ActivityLogController::class, 'statistik']);
             Route::get('/log-aktivitas/verifikasi', [ActivityLogController::class, 'verifikasi']);
             Route::get('/log-aktivitas/ekspor', [ActivityLogController::class, 'ekspor']);
 
