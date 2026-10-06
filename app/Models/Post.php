@@ -13,6 +13,8 @@ class Post extends Model
 
     protected $fillable = [
         'user_id', 'judul', 'slug', 'kategori', 'gambar', 'ringkasan', 'konten', 'tanggal', 'is_published',
+        // Kolom SEO ala Yoast (boleh kosong -> memakai judul/ringkasan berita)
+        'meta_judul', 'meta_deskripsi', 'kata_kunci',
     ];
 
     protected $casts = [
@@ -20,7 +22,32 @@ class Post extends Model
         'is_published' => 'boolean',
     ];
 
-    protected $appends = ['gambar_url', 'author_name', 'rating'];
+    protected $appends = ['gambar_url', 'author_name', 'rating', 'seo_judul', 'seo_deskripsi'];
+
+    /** Judul SEO: pakai kolom khusus bila diisi, kalau tidak judul berita. */
+    public function getSeoJudulAttribute(): string
+    {
+        $khusus = trim((string) ($this->attributes['meta_judul'] ?? ''));
+
+        return $khusus !== '' ? $khusus : trim((string) ($this->attributes['judul'] ?? ''));
+    }
+
+    /**
+     * Deskripsi meta: pakai kolom khusus bila diisi, kalau tidak ringkasan berita.
+     * Dibersihkan dari tag HTML dan dipotong ~160 karakter (batas tampil Google).
+     * html_entity_decode wajib: tanpa itu "&amp;" ikut tampil apa adanya.
+     */
+    public function getSeoDeskripsiAttribute(): string
+    {
+        $khusus = trim((string) ($this->attributes['meta_deskripsi'] ?? ''));
+        $teks = $khusus !== ''
+            ? $khusus
+            : strip_tags((string) ($this->attributes['ringkasan'] ?? ''));
+
+        $teks = trim(preg_replace('/\s+/', ' ', html_entity_decode($teks, ENT_QUOTES | ENT_HTML5, 'UTF-8')));
+
+        return mb_substr($teks, 0, 160);
+    }
 
     /** Kategori bawaan — hanya dipakai bila tabel `categories` belum terisi. */
     public const KATEGORI = ['berita', 'pengumuman', 'prestasi'];

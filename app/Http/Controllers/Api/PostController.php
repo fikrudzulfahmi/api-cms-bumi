@@ -179,6 +179,10 @@ class PostController extends Controller
             'konten' => 'nullable|string',
             'tanggal' => 'nullable|date',
             'is_published' => 'nullable|boolean',
+            // SEO ala Yoast
+            'meta_judul' => 'nullable|string|max:255',
+            'meta_deskripsi' => 'nullable|string|max:320',
+            'kata_kunci' => 'nullable|string|max:120',
         ];
     }
 

@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CommentController;
 use App\Http\Controllers\Api\PostInteractionController;
+use App\Http\Controllers\Api\SeoController;
 use App\Http\Controllers\Api\ExtracurricularController;
 use App\Http\Controllers\Api\FacilityController;
 use App\Http\Controllers\Api\FeedbackController;
@@ -39,6 +40,9 @@ Route::middleware('throttle:60,1')->group(function () {
 });
 
 Route::get('/kategori', [CategoryController::class, 'index']);
+
+// Data ringkas untuk sitemap.xml — dipakai front controller PHP di docroot situs depan.
+Route::get('/seo/url', [SeoController::class, 'url']);
 Route::get('/umpan-balik', [FeedbackController::class, 'index']);
 Route::get('/jurusan', [MajorController::class, 'index']);
 Route::get('/jurusan/{slug}', [MajorController::class, 'show']);
