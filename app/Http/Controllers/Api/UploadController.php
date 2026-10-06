@@ -16,8 +16,14 @@ class UploadController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'file' => 'required|image|mimes:jpg,jpeg,png,webp,gif|max:5120',
+            'file' => 'required|image|mimes:jpg,jpeg,png,webp,gif|max:12288',
             'dir' => 'nullable|string|max:50',
+        ], [
+            'file.required' => 'Pilih gambar terlebih dahulu.',
+            'file.image' => 'Berkas harus berupa gambar (JPG, PNG, WEBP, atau GIF).',
+            'file.mimes' => 'Format gambar harus JPG, PNG, WEBP, atau GIF.',
+            'file.max' => 'Ukuran gambar terlalu besar (maksimal 12 MB).',
+            'file.uploaded' => 'Gambar gagal diunggah — ukurannya melebihi batas server. Coba gambar yang lebih kecil.',
         ]);
 
         $dir = $request->filled('dir') ? preg_replace('/[^a-z0-9_\-]/i', '', $request->dir) : 'umum';
