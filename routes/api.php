@@ -57,10 +57,10 @@ Route::prefix('admin')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         // Komentar berita — admin melihat semua, penulis hanya berita miliknya.
         // Sengaja di luar grup 'admin' agar penulis bisa membalas komentarnya.
+        // Menghapus komentar utama otomatis menghapus balasannya.
         Route::get('/komentar', [CommentController::class, 'index']);
         Route::put('/komentar/{comment}', [CommentController::class, 'update']);
         Route::post('/komentar/{comment}/balas', [CommentController::class, 'balas']);
-        Route::delete('/komentar/{comment}/balasan', [CommentController::class, 'hapusBalasan']);
         Route::delete('/komentar/{comment}', [CommentController::class, 'destroy']);
         // --- Bisa diakses admin & penulis ---
         Route::get('/me', [AuthController::class, 'me']);

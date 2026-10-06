@@ -94,20 +94,31 @@ class PostInteractionController extends Controller
         ]]);
     }
 
-    /** Komentar yang sudah disetujui — termasuk balasan pengelola bila ada. */
+    /**
+     * Komentar yang sudah disetujui, lengkap dengan balasannya.
+     * Balasan selalu dikelompokkan di bawah komentar utama (maksimal 2 tingkat).
+     */
     public function komentar(string $slug)
     {
         $post = Post::published()->where('slug', $slug)->firstOrFail();
 
+        $kolom = ['id', 'parent_id', 'nama', 'isi', 'balas_ke', 'user_id', 'created_at'];
+
         return response()->json([
-            'data' => $post->komentar()->disetujui()->latest()->get([
-                'id', 'nama', 'isi', 'created_at',
-                'balasan', 'balasan_at', 'balasan_oleh',
-            ]),
+            'data' => $post->komentar()
+                ->disetujui()
+                ->induk()
+                ->with(['children' => fn ($q) => $q->disetujui()->oldest('id')->select($kolom)])
+                ->latest('id')
+                ->get($kolom),
         ]);
     }
 
-    /** Kirim komentar — tampil setelah disetujui pengelola. */
+    /**
+     * Kirim komentar — boleh juga sebagai balasan (pengunjung saling membalas).
+     * Bila membalas sebuah balasan, sasaran dipindah ke komentar utamanya dan
+     * nama yang disapa dicatat di `balas_ke` ("@Nama").
+     */
     public function kirimKomentar(Request $request, string $slug)
     {
         $post = Post::published()->where('slug', $slug)->firstOrFail();
@@ -116,6 +127,8 @@ class PostInteractionController extends Controller
             'nama' => 'required|string|max:80',
             'email' => 'nullable|email|max:120',
             'isi' => 'required|string|min:5|max:1500',
+            'parent_id' => 'nullable|integer',
+            'balas_ke' => 'nullable|string|max:80',
         ], [
             'nama.required' => 'Nama wajib diisi.',
             'isi.required' => 'Komentar tidak boleh kosong.',
@@ -124,34 +137,71 @@ class PostInteractionController extends Controller
             'email.email' => 'Alamat email tidak sah.',
         ]);
 
-        $baruSejam = PostComment::where('post_id', $post->id)
+        $parentId = null;
+        $balasKe = trim((string) ($data['balas_ke'] ?? '')) ?: null;
+
+        if (! empty($data['parent_id'])) {
+            $sasaran = PostComment::where('post_id', $post->id)->find($data['parent_id']);
+
+            if (! $sasaran) {
+                return response()->json(['message' => 'Komentar yang ingin dibalas tidak ditemukan.'], 422);
+            }
+
+            if ($sasaran->parent_id) {
+                // Membalas sebuah balasan → tetap ditempel di komentar utamanya.
+                $balasKe = $balasKe ?: $sasaran->nama;
+                $parentId = $sasaran->parent_id;
+            } else {
+                $parentId = $sasaran->id;
+            }
+        }
+
+        // Batas: maksimal 5 kiriman per jam per pengunjung per berita
+        // (cukup untuk bercakap-cakap, tetapi menahan spam).
+        $sejam = PostComment::where('post_id', $post->id)
             ->where('ip', $request->ip())
             ->where('created_at', '>=', now()->subHour())
-            ->exists();
+            ->count();
 
-        if ($baruSejam) {
+        if ($sejam >= 5) {
             return response()->json([
-                'message' => 'Anda baru saja mengirim komentar. Mohon tunggu satu jam lagi.',
+                'message' => 'Terlalu banyak komentar dalam satu jam. Silakan coba lagi nanti.',
             ], 429);
         }
 
-        $komentar = PostComment::create($data + [
+        $komentar = PostComment::create([
             'post_id' => $post->id,
+            'parent_id' => $parentId,
+            'balas_ke' => $balasKe,
+            'nama' => $data['nama'],
+            'email' => $data['email'] ?? null,
+            'isi' => $data['isi'],
             'ip' => $request->ip(),
             'is_approved' => false,
         ]);
 
-        Activity::log('komentar_baru', "Komentar baru dari {$komentar->nama} pada: {$post->judul}", [
-            'severity' => 'info',
-            'status' => 201,
-            'subject_type' => 'Post',
-            'subject_id' => (string) $post->id,
-            'data' => ['panjang' => strlen($komentar->isi)],
-        ]);
+        Activity::log(
+            $parentId ? 'balas_komentar' : 'komentar_baru',
+            sprintf(
+                '%s %s pada: %s',
+                $komentar->nama,
+                $parentId ? 'membalas komentar' : 'mengirim komentar baru',
+                $post->judul
+            ),
+            [
+                'severity' => 'info',
+                'status' => 201,
+                'subject_type' => 'Post',
+                'subject_id' => (string) $post->id,
+                'data' => ['komentar_id' => $komentar->id, 'induk' => $parentId],
+            ]
+        );
 
         return response()->json([
             'data' => ['id' => $komentar->id],
-            'message' => 'Terima kasih! Komentar Anda akan tampil setelah disetujui pengelola.',
+            'message' => $parentId
+                ? 'Terima kasih! Balasan Anda akan tampil setelah disetujui pengelola.'
+                : 'Terima kasih! Komentar Anda akan tampil setelah disetujui pengelola.',
         ], 201);
     }
 

@@ -5,18 +5,21 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Komentar pembaca. Tampil di halaman publik hanya setelah disetujui admin
- * (`is_approved`), supaya spam tidak langsung muncul.
+ * Komentar pembaca + balasannya (berjenjang, maksimal 2 tingkat).
  *
- * Penulis berita boleh membalas komentarnya lewat kolom `balasan` (satu balasan
- * resmi per komentar). Membalas otomatis menyetujui komentarnya, karena penulis
- * yang menjawab berarti komentar itu memang layak tampil.
+ *  - parent_id NULL  → komentar utama.
+ *  - parent_id terisi → balasan; selalu ditempel ke komentar UTAMA.
+ *  - balas_ke         → nama yang disapa, untuk balasan antar pengunjung ("@Nama").
+ *  - user_id terisi   → balasan dari penulis/admin yang login (label "Pengelola").
+ *
+ * Komentar publik hanya tampil bila `is_approved` (moderasi admin/penulis).
  */
 class PostComment extends Model
 {
     protected $fillable = [
-        'post_id', 'nama', 'email', 'isi', 'is_approved', 'ip',
-        'balasan', 'balasan_at', 'balasan_oleh',
+        'post_id', 'parent_id', 'user_id', 'balas_ke',
+        'nama', 'email', 'isi', 'is_approved', 'ip',
+        'balasan', 'balasan_at', 'balasan_oleh', // kolom lama, tidak dipakai lagi
     ];
 
     protected $casts = [
@@ -24,9 +27,36 @@ class PostComment extends Model
         'balasan_at' => 'datetime',
     ];
 
+    protected $appends = ['is_pengelola'];
+
+    /** Menghapus komentar utama ikut menghapus seluruh balasannya. */
+    protected static function booted(): void
+    {
+        static::deleting(function (self $komentar) {
+            foreach ($komentar->children()->get() as $anak) {
+                $anak->delete();
+            }
+        });
+    }
+
     public function post()
     {
         return $this->belongsTo(Post::class);
+    }
+
+    public function parent()
+    {
+        return $this->belongsTo(self::class, 'parent_id');
+    }
+
+    public function children()
+    {
+        return $this->hasMany(self::class, 'parent_id');
+    }
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
     }
 
     public function scopeDisetujui($query)
@@ -34,14 +64,27 @@ class PostComment extends Model
         return $query->where('is_approved', true);
     }
 
-    public function scopeSudahDibalas($query)
+    /** Komentar utama saja. */
+    public function scopeInduk($query)
     {
-        return $query->whereNotNull('balasan')->where('balasan', '!=', '');
+        return $query->whereNull('parent_id');
     }
 
-    public function getSudahDibalasAttribute(): bool
+    /** Balasan saja. */
+    public function scopeBalasan($query)
     {
-        return filled($this->balasan);
+        return $query->whereNotNull('parent_id');
+    }
+
+    public function scopeSudahDibalas($query)
+    {
+        return $query->whereHas('children');
+    }
+
+    /** Balasan dari penulis/admin (bukan pengunjung). */
+    public function getIsPengelolaAttribute(): bool
+    {
+        return ! is_null($this->attributes['user_id'] ?? null);
     }
 
     /** Nama entitas pada log aktivitas. */

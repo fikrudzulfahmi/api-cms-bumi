@@ -8,14 +8,17 @@ use App\Support\Activity;
 use Illuminate\Http\Request;
 
 /**
- * Moderasi + balasan komentar berita.
+ * Moderasi komentar & balasan berita.
  *
  * Hak akses:
- *  - ADMIN   → semua komentar, boleh setujui/sembunyikan/hapus/balas.
- *  - PENULIS → hanya komentar pada berita MILIKNYA SENDIRI; boleh balas, setujui,
- *              sembunyikan, dan hapus. Semua tercatat di log aktivitas, jadi admin
- *              tetap bisa menelusuri tindakan penulis.
+ *  - ADMIN   → semua komentar/balasan.
+ *  - PENULIS → hanya yang berada di berita MILIKNYA SENDIRI.
  *  - Selain itu → 403.
+ *
+ * Yang bisa dilakukan: membalas (sebagai pengelola), mengubah isi, menyetujui/
+ * menyembunyikan, dan menghapus — baik komentar pengunjung maupun balasan
+ * (termasuk balasan pengunjung yang tidak pantas). Menghapus komentar utama
+ * otomatis menghapus seluruh balasannya.
  */
 class CommentController extends Controller
 {
@@ -23,7 +26,10 @@ class CommentController extends Controller
     {
         $user = $request->user();
 
-        $query = PostComment::with('post:id,judul,slug,user_id')->latest('id');
+        $query = PostComment::with([
+            'post:id,judul,slug,user_id',
+            'parent:id,nama,isi',
+        ])->withCount('children')->latest('id');
 
         // Penulis hanya melihat komentar pada beritanya sendiri.
         if (! $user->isAdmin()) {
@@ -34,10 +40,15 @@ class CommentController extends Controller
             $query->where('is_approved', $request->input('status') === 'disetujui');
         }
 
+        if ($request->filled('jenis')) {
+            $request->input('jenis') === 'balasan' ? $query->balasan() : $query->induk();
+        }
+
+        // Belum dibalas = komentar utama yang belum punya balasan sama sekali.
         if ($request->filled('dibalas')) {
             $request->input('dibalas') === 'sudah'
-                ? $query->sudahDibalas()
-                : $query->where(fn ($q) => $q->whereNull('balasan')->orWhere('balasan', ''));
+                ? $query->induk()->sudahDibalas()
+                : $query->induk()->whereDoesntHave('children');
         }
 
         if ($request->filled('post_id')) {
@@ -49,14 +60,17 @@ class CommentController extends Controller
             $query->where(function ($w) use ($cari) {
                 $w->where('nama', 'like', "%{$cari}%")
                     ->orWhere('isi', 'like', "%{$cari}%")
-                    ->orWhere('balasan', 'like', "%{$cari}%");
+                    ->orWhere('balas_ke', 'like', "%{$cari}%");
             });
         }
 
         return response()->json($query->paginate(min((int) $request->input('per_page', 30), 200)));
     }
 
-    /** Balas komentar pengunjung (penulis berita atau admin). */
+    /**
+     * Balas sebagai pengelola (penulis/admin).
+     * Balasan resmi selalu ditempel di komentar utama dan langsung tampil.
+     */
     public function balas(Request $request, PostComment $comment)
     {
         if (! $this->bolehKelola($request, $comment)) {
@@ -71,72 +85,84 @@ class CommentController extends Controller
             'balasan.max' => 'Balasan terlalu panjang (maksimal 1000 karakter).',
         ]);
 
-        $komentarLama = $comment->sudah_dibalas ? $comment->balasan : null;
+        $indukId = $comment->parent_id ?: $comment->id;
+        $balasKe = $comment->parent_id ? $comment->nama : null;
 
-        $comment->update([
-            'balasan' => $data['balasan'],
-            'balasan_at' => now(),
-            'balasan_oleh' => $request->user()->name,
-            // Penulis/pengelola menjawab = komentar ini pantas tampil.
+        $balasan = PostComment::create([
+            'post_id' => $comment->post_id,
+            'parent_id' => $indukId,
+            'user_id' => $request->user()->id,
+            'balas_ke' => $balasKe,
+            'nama' => $request->user()->name,
+            'isi' => $data['balasan'],
             'is_approved' => true,
+            'ip' => $request->ip(),
         ]);
 
+        // Penulis menjawab = komentar itu pantas tampil.
+        if (! $comment->is_approved) {
+            $comment->update(['is_approved' => true]);
+        }
+
         Activity::log(
-            $komentarLama ? 'ubah_balasan' : 'balas_komentar',
-            sprintf(
-                '%s %s komentar dari %s pada: %s',
-                $request->user()->name,
-                $komentarLama ? 'memperbarui balasan' : 'membalas',
-                $comment->nama,
-                $comment->post?->judul ?? '-'
-            ),
+            'balas_komentar',
+            "{$request->user()->name} membalas komentar dari {$comment->nama} pada: ".($comment->post?->judul ?? '-'),
             [
                 'severity' => 'info',
-                'status' => 200,
+                'status' => 201,
                 'subject_type' => 'Post',
                 'subject_id' => (string) $comment->post_id,
-                'data' => ['komentar_id' => $comment->id, 'panjang_balasan' => strlen($data['balasan'])],
+                'data' => ['balasan_id' => $balasan->id, 'komentar_id' => $comment->id],
             ]
         );
 
         return response()->json([
-            'data' => $comment->fresh()->load('post:id,judul,slug,user_id'),
-            'message' => $komentarLama ? 'Balasan diperbarui.' : 'Balasan terkirim dan komentar kini tampil di situs.',
-        ]);
+            'data' => $balasan->fresh()->load(['post:id,judul,slug,user_id', 'parent:id,nama,isi']),
+            'message' => 'Balasan terkirim dan komentar kini tampil di situs.',
+        ], 201);
     }
 
-    /** Hapus balasan saja — komentar pengunjung tetap ada. */
-    public function hapusBalasan(Request $request, PostComment $comment)
-    {
-        if (! $this->bolehKelola($request, $comment)) {
-            return $this->tolak();
-        }
-
-        $comment->update(['balasan' => null, 'balasan_at' => null, 'balasan_oleh' => null]);
-
-        return response()->json(['data' => $comment->fresh(), 'message' => 'Balasan dihapus.']);
-    }
-
-    /** Setujui / sembunyikan, atau ubah isi komentar. */
+    /** Ubah isi komentar/balasan, atau setujui/sembunyikan. */
     public function update(Request $request, PostComment $comment)
     {
         if (! $this->bolehKelola($request, $comment)) {
             return $this->tolak();
         }
 
-        $data = $request->validate(
-            ['is_approved' => 'required|boolean', 'isi' => 'nullable|string|max:1500'],
-            ['is_approved.required' => 'Status persetujuan wajib diisi.']
-        );
+        $data = $request->validate([
+            'is_approved' => 'nullable|boolean',
+            'isi' => 'nullable|string|min:2|max:1500',
+        ], [
+            'isi.min' => 'Isi terlalu pendek.',
+            'isi.max' => 'Isi terlalu panjang (maksimal 1500 karakter).',
+        ]);
 
-        $comment->update($data);
+        $ubah = [];
+        if ($request->has('is_approved')) {
+            $ubah['is_approved'] = $request->boolean('is_approved');
+        }
+        if ($request->filled('isi')) {
+            $ubah['isi'] = $data['isi'];
+        }
+
+        if (! $ubah) {
+            return response()->json(['message' => 'Tidak ada perubahan yang dikirim.'], 422);
+        }
+
+        $comment->update($ubah);
+
+        $jenis = $comment->parent_id ? 'balasan' : 'komentar';
+        $tindakan = array_key_exists('is_approved', $ubah)
+            ? ($ubah['is_approved'] ? 'menyetujui' : 'menyembunyikan')
+            : 'menyunting';
 
         Activity::log(
-            $data['is_approved'] ? 'setujui_komentar' : 'sembunyikan_komentar',
+            $tindakan.'_'.($comment->parent_id ? 'balasan' : 'komentar'),
             sprintf(
-                '%s %s komentar dari %s pada: %s',
+                '%s %s %s dari %s pada: %s',
                 $request->user()->name,
-                $data['is_approved'] ? 'menyetujui' : 'menyembunyikan',
+                $tindakan,
+                $jenis,
                 $comment->nama,
                 $comment->post?->judul ?? '-'
             ),
@@ -145,39 +171,49 @@ class CommentController extends Controller
                 'status' => 200,
                 'subject_type' => 'Post',
                 'subject_id' => (string) $comment->post_id,
-                'data' => ['komentar_id' => $comment->id],
+                'data' => ['komentar_id' => $comment->id, 'jenis' => $jenis],
             ]
         );
 
         return response()->json(['data' => $comment->fresh()]);
     }
 
+    /**
+     * Hapus komentar ATAU balasan. Bila yang dihapus komentar utama,
+     * seluruh balasannya ikut terhapus (ditangani di model PostComment).
+     */
     public function destroy(Request $request, PostComment $comment)
     {
         if (! $this->bolehKelola($request, $comment)) {
             return $this->tolak();
         }
 
-        $judul = $comment->post?->judul ?? '-';
+        $jenis = $comment->parent_id ? 'balasan' : 'komentar';
         $nama = $comment->nama;
+        $judul = $comment->post?->judul ?? '-';
         $postId = $comment->post_id;
         $komentarId = $comment->id;
+        $jumlahAnak = $comment->children()->count();
 
         $comment->delete();
 
         Activity::log(
-            'hapus_komentar',
-            "{$request->user()->name} menghapus komentar dari {$nama} pada: {$judul}",
+            'hapus_'.$jenis,
+            "{$request->user()->name} menghapus {$jenis} dari {$nama} pada: {$judul}",
             [
                 'severity' => 'warning',
                 'status' => 200,
                 'subject_type' => 'Post',
                 'subject_id' => (string) $postId,
-                'data' => ['komentar_id' => $komentarId],
+                'data' => ['komentar_id' => $komentarId, 'balasan_ikut_terhapus' => $jumlahAnak],
             ]
         );
 
-        return response()->json(['message' => 'Komentar dihapus.']);
+        return response()->json([
+            'message' => $jenis === 'komentar' && $jumlahAnak > 0
+                ? "Komentar beserta {$jumlahAnak} balasannya dihapus."
+                : ucfirst($jenis).' dihapus.',
+        ]);
     }
 
     /** Admin bebas; penulis hanya pada berita miliknya. */
