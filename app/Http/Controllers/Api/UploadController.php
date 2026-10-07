@@ -42,6 +42,10 @@ class UploadController extends Controller
         if ($absolutBaru) {
             $path = 'uploads/'.$dir.'/'.basename($absolutBaru);
         }
+
+        // --- Varian ukuran (480/768/1200) untuk srcset: HP tak perlu gambar 1920px
+        GambarOptim::buatVarian(Storage::disk('public')->path($path));
+
         $ukuranAkhir = (int) Storage::disk('public')->size($path);
         $hemat = $ukuranAsli > 0 ? round(100 - ($ukuranAkhir / $ukuranAsli * 100)) : 0;
 

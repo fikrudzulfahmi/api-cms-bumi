@@ -152,4 +152,117 @@ class GambarOptim
 
         return $gambar;
     }
+
+    // ---------------------------------------------------------------- VARIAN
+    /**
+     * Lebar varian yang dibuat (px). Varian yang lebih besar dari gambar asli
+     * dilewati supaya tidak ada pembesaran (yang membuat berkas justru menggemuk).
+     */
+    public const VARIAN = [480, 768, 1200];
+
+    /** Awalan nama berkas varian: nama.webp -> nama-480.webp */
+    public static function namaVarian(string $path, int $lebar): string
+    {
+        return preg_replace('/\.[a-z0-9]+$/i', '', $path).'-'.$lebar.'.webp';
+    }
+
+    /**
+     * Buat varian ukuran dari sebuah berkas gambar.
+     *
+     * Dipakai agar HP tidak perlu mengunduh gambar 1920px hanya untuk kartu
+     * selebar ~380px. Berkas varian dibuat sekali dan dipakai selamanya
+     * (dilewati bila sudah ada dan lebih baru dari sumbernya).
+     *
+     * @return array<int,string> peta [lebar => path absolut]
+     */
+    public static function buatVarian(string $path, bool $paksa = false): array
+    {
+        if (! self::didukung() || ! is_file($path)) {
+            return [];
+        }
+
+        $info = @getimagesize($path);
+        if (! $info) {
+            return [];
+        }
+
+        $sumber = match ($info[2] ?? 0) {
+            IMAGETYPE_JPEG => @imagecreatefromjpeg($path),
+            IMAGETYPE_PNG => @imagecreatefrompng($path),
+            IMAGETYPE_WEBP => @imagecreatefromwebp($path),
+            default => null,
+        };
+
+        if (! $sumber) {
+            return [];
+        }
+
+        $lebarAsli = imagesx($sumber);
+        $tinggiAsli = imagesy($sumber);
+        $hasil = [];
+        $waktuSumber = (int) @filemtime($path);
+
+        foreach (self::VARIAN as $lebar) {
+            if ($lebar >= $lebarAsli) {
+                continue;   // tidak perlu diperbesar
+            }
+
+            $tujuan = self::namaVarian($path, $lebar);
+
+            if (! $paksa && is_file($tujuan) && (int) @filemtime($tujuan) >= $waktuSumber) {
+                $hasil[$lebar] = $tujuan;
+
+                continue;
+            }
+
+            $tinggi = max(1, (int) round($tinggiAsli * ($lebar / $lebarAsli)));
+            $kanvas = imagecreatetruecolor($lebar, $tinggi);
+            imagealphablending($kanvas, false);
+            imagesavealpha($kanvas, true);
+            imagecopyresampled($kanvas, $sumber, 0, 0, 0, 0, $lebar, $tinggi, $lebarAsli, $tinggiAsli);
+
+            $ok = @imagewebp($kanvas, $tujuan, self::KUALITAS);
+            imagedestroy($kanvas);
+
+            if ($ok && is_file($tujuan)) {
+                $hasil[$lebar] = $tujuan;
+            }
+        }
+
+        imagedestroy($sumber);
+
+        return $hasil;
+    }
+
+    /**
+     * Susun atribut srcset untuk sebuah berkas (hanya varian yang ada).
+     * Mengembalikan null bila tidak ada varian — pemanggil memakai src biasa.
+     */
+    public static function srcset(string $path, string $urlDasar): ?string
+    {
+        if (! is_file($path)) {
+            return null;
+        }
+
+        $ukuran = @getimagesize($path);
+        $kandidat = [];
+
+        foreach (self::VARIAN as $lebar) {
+            $varian = self::namaVarian($path, $lebar);
+
+            if (is_file($varian)) {
+                $kandidat[] = rtrim($urlDasar, '/').'/'.basename($varian).' '.$lebar.'w';
+            }
+        }
+
+        if (! $kandidat) {
+            return null;
+        }
+
+        // Berkas utama jadi kandidat terbesar (lebar aslinya, bukan tebakan).
+        $lebarUtama = $ukuran ? (int) $ukuran[0] : 0;
+        $kandidat[] = rtrim($urlDasar, '/').'/'.basename($path).' '.$lebarUtama.'w';
+
+        return implode(', ', $kandidat);
+    }
 }

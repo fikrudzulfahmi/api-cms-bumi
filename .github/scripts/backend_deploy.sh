@@ -80,4 +80,7 @@ php artisan config:clear && php artisan config:cache
 php artisan view:clear
 php artisan storage:link 2>/dev/null || true
 
+echo "=== VARIAN UKURAN GAMBAR (srcset) ==="
+php artisan gambar:varian || echo "PERINGATAN: pembuatan varian gambar dilewati"
+
 echo "=== DEPLOY SELESAI ==="

@@ -22,7 +22,7 @@ class Post extends Model
         'is_published' => 'boolean',
     ];
 
-    protected $appends = ['gambar_url', 'author_name', 'rating', 'seo_judul', 'seo_deskripsi'];
+    protected $appends = ['gambar_url', 'gambar_srcset', 'author_name', 'rating', 'seo_judul', 'seo_deskripsi'];
 
     /** Judul SEO: pakai kolom khusus bila diisi, kalau tidak judul berita. */
     public function getSeoJudulAttribute(): string

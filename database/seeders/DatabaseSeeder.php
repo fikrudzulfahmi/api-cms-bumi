@@ -55,6 +55,8 @@ class DatabaseSeeder extends Seeder
             'jam_operasional' => 'Senin – Sabtu, 07.00 – 15.30 WIB',
             'informasi_pendaftaran' => '<p>Penerimaan Peserta Didik Baru (PPDB) MA Bustanul Muta\'allimin dibuka setiap tahun ajaran baru. Calon peserta didik dapat mendaftar secara daring maupun langsung ke sekretariat PPDB.</p><p>Syarat pendaftaran: fotokopi ijazah/SKL, pas foto, dan mengisi formulir pendaftaran. Informasi lengkap hubungi nomor WhatsApp kami.</p>',
             'link_ppdb' => 'https://psb.bustanulmutaallimin.com',
+            // Tombol di navbar situs depan (dapat diubah di Pengaturan)
+            'link_presensi' => 'https://sistem.bustanulmutaallimin.com',
             'sosmed_facebook' => 'https://facebook.com/',
             'sosmed_instagram' => 'https://instagram.com/',
             'sosmed_youtube' => 'https://youtube.com/',
